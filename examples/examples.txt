@@ -9,3 +9,52 @@ hotel
 chain panda
 gc copy - proved, mainly using cti
 bakery
+
+
+=============================
+Numbers used in UPenn slides
+=============================
+
+leader election (using function symbols, btw relation, and not putting "leader(X) -> idn(Y)<=idn(X)" in the original safety property):
+sorts: 2 - node, id
+relations and function symbols (counting only btw and not ring.le): 5 - ring.btw, le, leader, pending, idn
+number of literals in safety property: 3
+number of literals in invariant: 9
+number of CTI iterations : 3
+
+learning switch (with route.dom, hosts and switches are both nodes):
+sorts: 2 - node, packet
+relations and function symbols: 6 - route.tc, route.dom, pending, src, dst, link
+number of literals in safety property: 11 (the conjectures that come from the module)
+number of literals in invariant: 15 (not counting the conjectures that come from the module)
+number of CTI iterations : 5
+
+database chain replication (version of artifact evaluation, not using functoin symbols):
+sorts: 4
+relations and function symbols: 13
+number of literals in safety property: 11
+number of literals in invariant: 35
+number of CTI iterations : 7
+
+chord (version of artifact evaluation, not using functoin symbols):
+sorts: 1
+relations and function symbols: 13 (counting defined and derived relations)
+number of literals in original conjecture set: 35
+number of literals in final invariant: 46
+number of CTI iterations: 4 (two weaken and two strengthen)
+
+concensus unanimously (contrived protocol, very simple, the second attempt with better invariant not counting the less general clause):
+sorts: 2
+relations: 5
+number of literals in original conjecture set: 5
+number of literals in final invariant: 9
+number of CTI iterations: 2
+
+concensus quorum (I think this is a single round of Paxos):
+sorts: 3
+relations and function symbols: 7 (including the Skolem function quorum_intersection)
+number of literals in original conjecture set: 5
+number of literals in final invariant: 13
+number of CTI iterations: 3
+
+=============================
