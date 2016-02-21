@@ -1,6 +1,8 @@
 *.pyc
 *~
 .ipynb_checkpoints
+examples/*/*.ipynb
+g.png
 
 ########################
 # Python Lex Yacc files
@@ -9,6 +11,7 @@ concept_space_parsetab.py
 ivy_formulatab.py
 ivy_parsetab.py
 ivy_termtab.py
+ivy_dafny_parsetab.py
 
 ########################
 # LATEX temp files

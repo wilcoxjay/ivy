@@ -1,0 +1,99 @@
+#lang ivy1.3
+
+# PC=0
+# flag[me] = true;
+# PC=1
+# turn = other;
+# PC=2
+# while (flag[other] && turn == other) do skip;
+# PC=3 -- critical section
+# flag[me] = false;
+# PC=4
+
+type thread
+
+individual t0:thread
+individual t1:thread
+
+axiom t0 ~= t1
+axiom T = t0 | T = t1
+
+relation pc0(T:thread)
+relation pc1(T:thread)
+relation pc2(T:thread)
+relation pc3(T:thread)
+relation pc4(T:thread)
+
+init pc0(T)
+init ~pc1(T)
+init ~pc2(T)
+init ~pc3(T)
+init ~pc4(T)
+
+relation flag(T:thread)
+relation turn(T:thread)
+
+init ~flag(T)
+init ~turn(T)
+
+action step01 = {
+    local t:thread {
+        assume pc0(t);
+        flag(t) := true;
+        pc0(t) := false;
+        pc1(t) := true
+    }
+}
+
+action step12 = {
+    local t:thread {
+        assume pc1(t);
+        turn(t0) := t = t0;
+        pc1(t) := false;
+        pc2(t) := true
+    }
+}
+
+action step23 = {
+    local t:thread, other:thread {
+        assume t ~= other;
+        assume pc2(t);
+        assume ~(flag(other) & (turn(t0) <-> (other = t1)));
+        pc2(t) := false;
+        pc3(t) := true
+    }
+}
+
+action step34 = {
+    local t:thread {
+        assume pc3(t);
+        flag(t) := false;
+        pc3(t) := false;
+        pc4(t) := true
+    }
+}
+
+export step01
+export step12
+export step23
+export step34
+
+# The safety property
+conjecture ~(pc3(t0) & pc3(t1))
+
+# pc is unique
+conjecture ~(pc0(T) & pc1(T))
+conjecture ~(pc0(T) & pc2(T))
+conjecture ~(pc0(T) & pc3(T))
+conjecture ~(pc0(T) & pc4(T))
+conjecture ~(pc1(T) & pc2(T))
+conjecture ~(pc1(T) & pc3(T))
+conjecture ~(pc1(T) & pc4(T))
+conjecture ~(pc2(T) & pc3(T))
+conjecture ~(pc2(T) & pc4(T))
+conjecture ~(pc3(T) & pc4(T))
+
+# inductive invariant found by IND_MUSMSS
+conjecture ~(~flag(T1) & ~pc0(T1) & ~pc4(T1))
+conjecture ~(pc2(t0) & pc3(t1) & ~turn(t0))
+conjecture ~(pc2(t1) & pc3(t0) & turn(t0))
