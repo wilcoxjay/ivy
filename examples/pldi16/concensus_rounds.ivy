@@ -1,0 +1,242 @@
+#lang ivy1.3
+
+# STATUS: still work in progress, BMC looks good but no inductive invariant found
+
+# inspired by classic paxos (or fast paxos, I'm not sure)
+
+# it seems for this model, BMC bound of 7 is needed to disproves many wrong conjectures
+
+# modules
+
+module total_order(r) = {
+    axiom r(X,X)                        # Reflexivity
+    axiom r(X, Y) & r(Y, Z) -> r(X, Z)  # Transitivity
+    axiom r(X, Y) & r(Y, X) -> X = Y    # Anti-symmetry
+    axiom r(X, Y) | r(Y, X)             # Totality
+}
+
+module lone(f) = {
+    axiom (f(X, Y1) & f(X, Y2)) -> Y1 = Y2
+}
+
+# types and relations
+
+type node
+type value
+type quorum
+type round
+
+relation le(X:round, Y:round)
+instantiate total_order(le)
+individual zero:round
+axiom le(zero, X)
+
+relation member(N:node, Q:quorum)
+# forall Q1 Q2 exists N. member(N, Q1) & member(N, Q2)
+individual quorum_intersection(Q1:quorum, Q2:quorum) : node  # a Skolem function
+axiom member(quorum_intersection(Q1, Q2), Q1)
+axiom member(quorum_intersection(Q1, Q2), Q2)
+
+relation val(R:round, N:node, V:value)  # TODO: maybe should be a function: round*node -> value
+relation decided(R:round, N:node, Q:quorum)
+individual none:value
+conjecture (val(R, N, V1) & val(R, N, V2)) -> V1 = V2
+
+relation leader(R:round, X:node)  # TODO: maybe should be a function: round -> node
+instantiate lone(leader)
+
+relation propose(R:round, V:value, N:node)  # round R proposed value V to node N
+relation ack(R:round, S:node, V:value)  # node S sent an ack to round R with value V
+relation rnd(S:node, R:round)  # TODO: maybe should be a function: node -> round
+instantiate lone(rnd)
+init rnd(N, zero)
+
+relation knowledge(R:round, Y:node, V:value)
+relation got_1b_from(R:round, X:node)
+relation max_1b(R1:round, R2:round, V:value)  # (R2,V) is the highest round-value pair sent to round R1 in a 1b message (sorted by round)
+axiom (knowledge(R, Y, Z1) & knowledge(R, Y, Z2)) -> Z1=Z2
+axiom (max_1b(R, Y1, Z1) & max_1b(R, Y2, Z2)) -> (Y1=Y2 & Z1=Z2)
+relation msg_1a(R:round, N:node)  # a 1a message from round R to node N (the message is from the leader of the round)
+relation msg_1b_round(R1:round, N:node, R2:round) # a 1b message from node N to round R1 with round R2
+relation msg_1b_value(R1:round, N:node, V:value)  # a 1b message from node N to round R1 with value V
+# TODO: once we have better support for projections relations of arity 4, the above two relations should become one
+
+init ~propose(R, X, Y)
+init ~ack(R, X, Y)
+init ~knowledge(R, Y, Z)
+init ~got_1b_from(X, Y)
+init ~max_1b(X, Y, Z)
+init ~decided(R, X, Q)
+init val(R, X, V) <-> V = none
+init ~msg_1a(X, Y)
+init ~msg_1b_round(R1:round, N:node, R2:round)
+init ~msg_1b_value(R1:round, N:node, V:value)
+
+action send_1a = {
+    local n:node, r1:round, r2:round {
+        # jump to higher round and notify everyone
+
+        assume rnd(n, r1);
+        assume le(r1, r2) & r1 ~= r2;
+        assume leader(r2, n);
+
+        msg_1a(r2, N) := true;
+        rnd(n, R) := R = r2  # rnd(n) := r2
+    }
+}
+
+action send_1b = {  # could also be called receive_1a
+    local n:node, v:value, r1:round, r2:round {
+        # process a 1a message, possibly moving to a new round and sending a 1b message
+
+        assume rnd(n, r1);
+        assume msg_1a(r2, n);
+        assume val(r1, n, v);
+
+        if le(r1, r2) & r1 ~= r2 {
+            msg_1b_round(r2, n, r1) := true;
+            msg_1b_value(r2, n, v) := true;
+            rnd(n, R) := R = r2  # rnd(n) := r2
+        }
+    }
+}
+
+action receive_1b = {
+    local n1:node, n2:node, v1:value, v2:value, r1:round, r2:round, r3:round {
+        # process a 1b message: update got_1b_from and max_1b
+
+        assume rnd(n1, r1);
+        assume leader(r1, n1);
+        assume msg_1b_round(r1, n2, r2);
+        assume msg_1b_value(r1, n2, v1);
+
+        got_1b_from(r1, n2) := true;
+
+        # update max_1b(r1) to be the highest round-value pair
+        # according to round, if the value is not none
+        if v1 ~= none {
+            if ~max_1b(r1, R:round, V:value) {
+                max_1b(r1, r2, v1) := true
+            } else {
+                assume max_1b(r1, r3, v2);
+                if le(r3, r2) {
+                    max_1b(r1, R, V) := R = r2 & V = v1
+                }
+            }
+        }
+    }
+}
+
+action prop = {
+    local n:node, v:value, q:quorum, r1:round, r2:round {
+        # after getting 1b messages from a quorum, the leader proposes
+        # a value to everyone
+
+        assume rnd(n, r1);
+        assume leader(r1, n);
+        assume val(r1, n, none);
+        assume member(N, q) -> got_1b_from(r1, N);
+
+        if ~max_1b(r1, R:round, V:value) {
+            assume v ~= none
+        } else {
+            assume max_1b(r1, r2, v)
+        };
+
+        propose(r1, v, X) := true;
+        val(r1, n, V) := V = v;
+        ack(r1, n, v) := true
+    }
+}
+
+action receive_prop = {
+    local n1:node, n2:node, v1:value, v2:value, r:round {
+        # process a propose message and reply an acknowledge message
+
+        assume propose(r, v1, n2);
+        assume rnd(n2, r);
+        assume leader(r, n1); # this is just instatiation of AE of the leader function
+
+        if val(r, n2, none) & ~decided(r, n2, Q:quorum) {
+            # if we have no value and are undecided - take the proposed value
+
+            # actually, we would like to remove the undecided part
+            # from the if, but this would require an AE invariant!
+
+            val(r, n2, V) := V = v1
+        };
+
+        assume val(r, n2, v2);
+        ack(r, n2, v2) := true
+    }
+}
+
+action receive_ack = {
+    local n1:node, n2:node, v:value, r:round {
+        # process an acknowledge message by updating the knowledge
+
+        assume ack(r, n1, v);
+        # shouldn't we have assume rnd(n1, r) here? I guess it doesn't matter
+        assume leader(r, n2);  # this is just instatiation of AE of the leader function
+        assume rnd(n2, r);  # this check seems non-local, maybe it
+                              # should be removed - how can n1 know if
+                              # the leader of its round (n2) is still
+                              # in the same round?
+        knowledge(r, n1, v) := true
+    }
+}
+
+action decide = {
+    local n:node, v:value, q:quorum, r:round {
+        # assume that node n has value v, and has knowledge of a quorum that also has v, and make n decided.
+
+        assume rnd(n, r);
+        assume val(r, n, v);
+        assume member(N, q) -> knowledge(r, N, v);  # if you comment this out you need 6 steps to violate safety
+
+        decided(r, n, q) := true
+    }
+}
+
+export send_1a
+export send_1b
+export receive_1b
+export prop
+export receive_prop
+export receive_ack
+export decide
+
+
+# The safety property - any two decided nodes have the same value, including across rounds
+conjecture (decided(R1, N1, Q1) & decided(R2, N2, Q2) & val(R1, N1, V1) & val(R2, N2, V2)) -> V1 = V2
+
+# additional manual conjectures
+conjecture (val(R, N1, V1) & val(R, N2, V2)) -> V1 = V2
+conjecture (msg_1b_round(X, Y, Z1) & msg_1b_round(X, Y, Z2)) -> Z1=Z2
+conjecture (msg_1b_value(X, Y, V1) & msg_1b_value(X, Y, V2)) -> V1=V2
+conjecture (msg_1b_round(R1, N, R2) & msg_1b_value(R1, N, V2)) -> val(R2, N, V2)
+
+# added for sanity relating to none
+conjecture decided(R, N, Q) -> ~val(R, N, none)
+conjecture (val(R, N1, V1) & val(R, N2, V2) & V1 ~= none & V2 ~= none) -> V1 = V2
+
+# adjusted from concensus_quorum.ivy
+conjecture ~(knowledge(R, N1, V0) & ~ack(R, N1, V0))
+conjecture ~(ack(R, N0, V0) & ~val(R, N0, V0))
+conjecture ~(decided(R3, N1, Q) & member(N2, Q) & val(R1, N1, V1) & val(R2, N2, V2) & V1 ~= V2 & V1 ~= none & V2 ~= none)
+
+# obtained interactiveley
+conjecture ~(R1 ~= R0 & le(R1, R0) & decided(R0, N0, Q0) & rnd(N0, R1))
+conjecture ~(R1 ~= R0 & le(R1, R0) & msg_1b_round(R0, N0, R0))
+conjecture ~(R1 ~= R0 & V0 ~= V1 & le(R0, R1) & decided(R0, N0, Q0) & val(R0, N0, V1) & val(R1, N0, V0) & V0 ~= none)
+conjecture ~(~val(R0, N0, V0) & leader(R0, N0) & propose(R0, V0, N1))
+conjecture ~(R1 ~= R0 & le(R1, R0) & msg_1b_value(R0, N0, V1) & rnd(N0, R1))
+conjecture ~(~propose(R0, V1, N0) & val(R0, N0, V1) & V1 ~= none)
+
+# some wrong conjectures:
+
+# the following conjecture is not correct (counterexample with 7 steps)
+# conjecture ~(decided(R3, N1, Q) & member(N2, Q) & val(R1, N1, V1) & val(R2, N2, V2) & V1 ~= V2) - needs  V1 ~= none & V2 ~= none to be correct
+
+# the following conjecture is not correct (counterexample with 7 steps)
+# conjecture ~(R1 ~= R0 & V0 ~= V1 & le(R0, R1) & decided(R0, N0, Q0) & val(R0, N0, V1) & val(R1, N0, V0))  - needs V0 ~= none to be correct
