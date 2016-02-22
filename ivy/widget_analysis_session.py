@@ -17,6 +17,8 @@ import time
 import IPython.html.widgets as widgets
 from IPython.html.widgets import HBox, VBox
 
+import z3
+
 from widget_cy_graph import CyGraphWidget
 from widget_dialog import DialogWidget
 from widget_modal_messages import ModalMessagesWidget
@@ -540,6 +542,7 @@ class TransitionViewWidget(ConceptSessionControls):
             ('gather facts', self.gather_facts),
             ('bmc conjecture', self.bmc_conjecture),
             ('minimize conjecture', self.minimize_conjecture),
+            ('magic', self.find_relative_inductive_conjecture),
             #('sufficient?', self.is_sufficient),
             ('rel. inductive?', self.is_inductive),
             ('strengthen', self.strengthen),
@@ -843,7 +846,7 @@ class TransitionViewWidget(ConceptSessionControls):
                 finally:
                     self.ignore_display_checkbox_change = False
                 self.set_states(res.states[0], res.states[1])
-                #self.post_graph.selected = self.get_relevant_elements(self.post_state[2], clauses)
+                #self.post_graph.selected = self.get_relevant_elements(self.post_state[2], clauses) # TODO - this should be put back or get_relevant_elements should be removed
                 self.show_result('The following conjecture is not inductive:\n{}'.format(
                     str(conj.to_formula()),
                 ))
@@ -858,7 +861,7 @@ class TransitionViewWidget(ConceptSessionControls):
         )
         return True
 
-    def get_selected_conjecture(self):
+    def get_selected_conjecture(self, facts=None):
         """
         Return a positive universal conjecture based on the selected facts.
 
@@ -867,10 +870,14 @@ class TransitionViewWidget(ConceptSessionControls):
         from logic_util import used_constants, free_variables, substitute
         from ivy_logic_utils import negate, Clauses, simplify_clauses
 
-        facts = self.get_active_facts()
+        if facts is None:
+            facts = self.get_active_facts()
         assert len(free_variables(*facts)) == 0, "conjecture would contain existential quantifiers..."
         sig_symbols = frozenset(self.session.analysis_state.ivy_interp.sig.symbols.values())
-        facts_consts = used_constants(*facts)
+        facts_consts = [
+            c for c in used_constants(*facts)
+            if lg.first_order_sort(c.sort)
+        ]
         subs = {}
         count = defaultdict(int)
         for c in sorted(facts_consts, key=lambda c: self.structure_renaming.get(c.name, c.name)):
@@ -1194,6 +1201,250 @@ class TransitionViewWidget(ConceptSessionControls):
                 conj.to_formula(),
             ))
             return True
+
+    def find_relative_inductive_conjecture(self, button=None):
+        """
+        Looks for a subset of the selected conjecture that is relative inductive.
+        Uses BMC with the current bound as a filter for initiation (use 0 to just test the initial states).
+
+        TODO: this has a lot in common with is_inductive, check_inductiveness and is_sufficient, and minimize_conjecture
+        should refactor common parts out
+
+        MAJOR TODO: go over the code and make sure it makes sense with function symbols (and also test on examples with function symbols)
+
+        """
+        from ivy_logic_utils import Clauses, and_clauses, dual_clauses, used_symbols_clauses, negate
+        import ivy_transrel
+        from ivy_solver import atom_to_z3, formula_to_z3, clauses_to_z3
+        import tactics_api as ta
+        from proof import ProofGoal
+        from ivy_logic_utils import Clauses, and_clauses, dual_clauses
+
+        if False:
+            facts = self.get_active_facts()
+        else:
+            # complete hack to get all facts quickly (without the user generalization)
+            facts = [
+                f for f in self.pre_state[1]
+                if type(f) is not lg.ForAll
+                and '@' not in str(f)
+            ]
+
+        n = len(facts)
+        print "len(self.get_active_facts()) = {}".format(n)
+
+        # TODO: get from somewhere else
+        init_action = ta.get_action('initialize')
+        step_action = ta.get_action('step')
+        n_steps = self.bmc_bound.value
+
+        # helper functions
+        def select(lst, indices):
+            return [lst[i] for i in indices]
+
+        axioms = self.session.analysis_state.ivy_interp.background_theory()
+
+        # create a solver that is used to test if a conjecture is
+        # true in all reachable states upto BMC bound
+        ag = self.new_ag()
+        with ag.context as ac:
+            ac.new_state(ag.init_cond)
+        post = ag.execute(init_action, None, None, 'initialize')
+        for i in range(n_steps):
+            post = ag.execute(step_action, None, None, 'step')
+            # TODO: check if the axioms get added to every step
+        post_clauses = and_clauses(post.clauses, axioms)
+        used_names = (
+            frozenset(x.name for x in self.session.analysis_state.ivy_interp.sig.symbols.values()) |
+            frozenset(x.name for x in used_symbols_clauses(post_clauses))
+        )
+        assert not any(
+            c.is_skolem() and c.name in used_names
+            for c in used_constants(*facts)
+        )
+        s_reach = z3.Solver()
+        alits = [z3.Const("__c{}".format(i), z3.BoolSort())
+                 for i in range(n)]
+        cc = [z3.Or(z3.Not(a),formula_to_z3(f))
+              for a,f in zip(alits,facts)]
+        for c in cc:
+            s_reach.add(c)
+        s_reach.add(clauses_to_z3(post_clauses))
+
+        # create a solver that is used to check if a conjecture in the pre state implies another conjecture in the post state
+        def get_bool(name):
+            return lg.Apply(lg.Const(
+                name, lg.FunctionSort(lg.BooleanSort(),)),)
+        guards = [get_bool('__guard_{}'.format(i))
+                  for i in range(n)]
+        z3_guards = [atom_to_z3(g) for g in guards]
+        guarded_facts = [
+            lg.Or(g, f)
+            for f, g in zip(facts, guards)
+        ]
+        guarded_conj = self.get_selected_conjecture(guarded_facts)
+        ag = self.new_ag()
+        pre = State(self.session.analysis_state.ivy_interp)
+        pre.clauses = and_clauses(axioms, guarded_conj, *self.conjectures)
+        post = ag.execute(step_action, pre, None, 'step')
+        post_clauses = and_clauses(post.clauses, axioms)
+        used_names = (
+            frozenset(x.name for x in self.session.analysis_state.ivy_interp.sig.symbols.values()) |
+            frozenset(x.name for x in used_symbols_clauses(post_clauses))
+        )
+        assert not any(
+            c.is_skolem() and c.name in used_names
+            for c in used_constants(*facts)
+        )
+        s_step = z3.Solver()
+        for c in cc:
+            s_step.add(c)
+        s_step.add(clauses_to_z3(post_clauses))
+
+        lm = LatticeMap(n)
+        print "Starting while True loop"
+        for i in range(n):
+            print "    ", i, facts[i]
+        relative_inductive = []
+        pre_at_most = 1
+        while pre_at_most <= 5: # TODO change this hardcoded 5
+            print '=== while True ===', "pre_at_most = ", pre_at_most
+            sample = lm.sample(pre_at_most)
+            if sample is None:
+                pre_at_most += 1
+                continue
+
+            pre_facts = [i for i in range(n)
+                         if ('pre', i) in sample]
+            post_facts = [i for i in range(n)
+                          if ('post', i) in sample]
+
+            # check if the negation of the pre facts is reachable
+            if s_reach.check(select(alits, pre_facts)) == z3.sat:
+                print "pre is too strong, it's violated in reachable states"
+                # grow by adding to pre until it is maximal satisfiable
+                current = pre_facts
+                for i in range(n):
+                    if (i not in current and
+                        s_reach.check(select(alits, current + [i]))
+                        == z3.sat):
+                        current.append(i)
+                        # print "adding {} to pre".format(i)
+                    else:
+                        # print "not adding {}".format(i)
+                        pass
+                # block any pre conjecture that is stronger than current, since current is already violated in the known reachable states
+                lm.block_pre_down(current)
+                continue
+
+            # check if the pre implies the post
+            pre_guards = select(z3_guards, [i for i in range(n)
+                                            if i not in pre_facts])
+            if (s_step.check(pre_guards + select(alits,post_facts))
+                == z3.sat):
+                # grow by adding to post
+                current_post = post_facts
+                for i in range(n):
+                    if (i not in current_post and
+                        s_step.check(pre_guards +
+                                     select(alits, current_post + [i]))
+                        == z3.sat):
+                        current_post.append(i)
+                # now grow more by removing from pre
+                current_pre = pre_facts
+                current_pre_guards = pre_guards
+                for i in range(n):
+                    if (i in current_pre and
+                        s_step.check(current_pre_guards +
+                                     [z3_guards[i]] +
+                                     select(alits, current_post))
+                        == z3.sat):
+                        # TODO: maybe we should also check s_reach
+                        # here as we are removing from pre. For now
+                        # I'm not checking it, as it could also be
+                        # useful - it's just something to try
+                        current_pre.remove(i)
+                        current_pre_guards.append(z3_guards[i])
+                # now we know that pre does not imply post at the next step. block this
+                lm.block_non_implication(current_pre, current_post)
+                continue
+
+            # now we know that pre implies post
+            # shrink by adding to pre or removing from post
+            # TODO: use unsat cores here...
+            current_post = post_facts
+            current_pre = pre_facts
+            # first, try to remove from post
+            for i in range(n):
+                if (i in current_post and
+                    s_step.check(select(z3_guards, [
+                        j for j in range(n)
+                        if j not in current_pre
+                    ]) + select(alits, set(current_post) - set([i])))
+                    == z3.unsat):
+                    current_post.remove(i)
+            # now, try to add to pre
+            for i in range(n):
+                if (i not in current_pre and
+                    s_step.check(select(z3_guards, [
+                        j for j in range(n)
+                        if j not in current_pre + [i]
+                    ]) + select(alits, current_post))
+                == z3.unsat):
+                    current_pre.append(i)
+            if set(current_pre) >= set(current_post):
+                # found relative inductive conjecture
+                relative_inductive.append(select(facts, current_post))
+                # maybe should stop here alreadby, but at least say we don't want posts that are subsumed by this
+                lm.block_implication(range(n), current_post)
+                break
+
+
+                # rel_ind_facts = select(facts, current_post)
+
+                # self.facts_list.value = [
+                #     (fact, elements)
+                #     for (label, (fact, elements)) in self.facts_list.options
+                #     if fact in rel_ind_facts
+                # ]
+                # self.highligh_selected_facts()
+                # self.show_result("Found the following relative inductive conjecture:\n{}".format(
+                #     self.get_selected_conjecture()
+                # ))
+                # return True
+            else:
+                lm.block_implication(current_pre, current_post)
+
+        global debug
+        debug = (relative_inductive, lm)
+
+        # got out of the loop with no conjecture
+        if len(relative_inductive) == 0:
+            msg = 'No relative inductive generalization found.'
+            print '\n' + msg + '\n'
+            self.show_result(msg)
+            return False
+        else:
+            relative_inductive.sort(key=len)
+            msg = "Found the following relative inductive conjectures:\n{}".format(
+                '\n'.join(str(self.get_selected_conjecture(fs)) for fs in relative_inductive)
+            )
+            self.show_result(msg)
+            print '\n' + msg + '\n'
+            # override the fact list - replace gather facts to get high arity facts
+            self.facts_list.options = [
+                (self.fact_to_label(formula), (formula, ()))
+                for formula in relative_inductive[0]
+            ]
+            self.facts_list.value = [
+                (fact, elements)
+                for (label, (fact, elements)) in self.facts_list.options
+                if fact in relative_inductive[0]
+            ]
+            self.highligh_selected_facts()
+            return True
+
+
 
     def strengthen(self, button=None):
         conj = self.get_selected_conjecture()
@@ -1646,3 +1897,107 @@ class AnalysisSessionWidget(object):
             assert False, is_sat
 
         t.custom_refine_or_reverse(goal, x, y, False)
+
+## LatticeMap
+
+def make_or(*args):
+    if len(args) == 0:
+       return False
+    else:
+       return z3.Or(*args)
+
+class LatticeMap(object):
+    """
+    A map for the implication lattice
+    """
+
+    def __init__(self, n):
+        self.n = n
+        self.s = z3.Solver()
+        self.pres = [z3.Bool('pre_{}'.format(i)) for i in range(n)]
+        self.posts = [z3.Bool('post_{}'.format(i)) for i in range(n)]
+        self.litmap = {
+            '{}_{}'.format(i,j): (i,j)
+            for i in ['pre', 'post']
+            for j in range(self.n)
+        }
+        # we always want pre stronger (smaller) than post
+        for i in range(n):
+            self.s.add(z3.Implies(
+                z3.Bool('pre_{}'.format(i)),
+                z3.Bool('post_{}'.format(i))
+            ))
+
+        # cardinality constrains on number of pre facts
+        self.pre_at_mosts = [z3.Bool('pre_at_most_{}'.format(i)) for i in range(n)]
+        for i in range(n):
+            self.s.add(z3.Implies(
+                self.pre_at_mosts[i],
+                z3.Sum([z3.If(x, 1, 0) for x in self.pres]) <= i
+            ))
+
+    def sample(self, pre_at_most=None):
+        if pre_at_most is None or pre_at_most >= self.n:
+            constrains = []
+        else:
+            assert 0 <= pre_at_most < self.n
+            constrains = [self.pre_at_mosts[pre_at_most]]
+        if self.s.check(constrains) == z3.unsat:
+            return None
+        else:
+            m = self.s.model()
+            # sample = set(self.litmap.values())
+            sample = set(
+                (i,j)
+                for i in ['post']
+                for j in range(self.n)
+            )
+
+            for x in m:
+                if x.name() not in self.litmap:
+                    continue
+                i, j = self.litmap[x.name()]
+                if i == 'post' and z3.is_false(m[x]):
+                    sample.remove((i, j))
+                elif i == 'pre' and z3.is_true(m[x]):
+                    sample.add((i, j))
+            print "LatticeMap: sample = {}, {}".format(
+                [i for i in range(self.n) if ('pre', i) in sample],
+                [i for i in range(self.n) if ('post', i) in sample],
+            )
+            return sample
+
+    def block_pre_down(self, pre):
+        # next time, a weaker pre
+        pre = sorted(pre)
+        print "LatticeMap: block_pre_down({})".format(pre)
+        self.block_implication(pre, [])
+
+    def block_non_implication(self, pre, post):
+        """
+        Similar to block down - a maximal satiafiable set.
+        """
+        # next time, either a weaker post or a stronger pre
+        pre = sorted(pre)
+        post = sorted(post)
+        print "LatticeMap: block_non_implication({}, {})".format(pre, post)
+        self.s.add(make_or([
+            z3.Bool('post_{}'.format(i))
+            for i in range(self.n) if i not in post
+        ] + [
+            z3.Not(z3.Bool('pre_{}'.format(i)))
+            for i in pre
+        ]))
+
+    def block_implication(self, pre, post):
+        # next time, either a stronger post or a weaker pre
+        pre = sorted(pre)
+        post = sorted(post)
+        print "LatticeMap: block_implication({}, {})".format(pre, post)
+        self.s.add(make_or([
+            z3.Not(z3.Bool('post_{}'.format(i)))
+            for i in post
+        ] + [
+            z3.Bool('pre_{}'.format(i))
+            for i in range(self.n) if i not in pre
+        ]))

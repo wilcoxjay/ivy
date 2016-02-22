@@ -240,3 +240,14 @@ conjecture ~(~propose(R0, V1, N0) & val(R0, N0, V1) & V1 ~= none)
 
 # the following conjecture is not correct (counterexample with 7 steps)
 # conjecture ~(R1 ~= R0 & V0 ~= V1 & le(R0, R1) & decided(R0, N0, Q0) & val(R0, N0, V1) & val(R1, N0, V0))  - needs V0 ~= none to be correct
+
+# obtained with IND-MUSMSS
+conjecture ~(ack(R0,N0,V0) & ~propose(R0,V0,N0))
+conjecture ~(leader(R0,N0) & propose(R0,V1,N0) & ~ack(R0,N0,V1))
+conjecture ~(msg_1b_value(R0,N0,V1) & ~msg_1a(R0,N0))
+conjecture ~(got_1b_from(R0,N0) & ~msg_1a(R0,N0))
+conjecture ~msg_1a(zero,N0)
+conjecture ~propose(zero,V0,N0)
+conjecture ~(val(R1,N0,V0) & ~leader(R0,N0) & ~leader(R1,N0) & ~val(R0,N0,V0))
+conjecture ~(val(R1,N0,none) & ~leader(R0,N0) & ~val(R0,N0,none))
+conjecture val(zero,N0,none)
