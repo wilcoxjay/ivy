@@ -1219,6 +1219,80 @@ class TransitionViewWidget(ConceptSessionControls):
             ))
             return True
 
+    def strengthen(self, button=None):
+        conj = self.get_selected_conjecture()
+        self.conjectures.append(conj)
+        self.show_result('Added the following conjecture:\n{}'.format(
+            conj.to_formula(),
+        ))
+
+    @interaction
+    def weaken(self, button=None):
+        user_selection = yield UserSelectMultiple(
+            options=[
+                (str(conj), conj)
+                for conj in self.conjectures
+            ],
+            title='Conjectures',
+            prompt='Select conjectures to remove',
+            default=()
+        )
+        if user_selection is not None:
+            for conj in user_selection:
+                self.conjectures.remove(conj)
+            self.show_result('Removed the following conjectures:\n{}'.format(
+                '\n'.join(str(conj) for conj in user_selection)
+            ))
+
+    def get_relevant_elements(self, a, clauses):
+        """
+        a is a concept abstract value dictionay. returns a list of nodes
+        and edges that appear in clauses
+        """
+        if a is None:
+            return []
+
+        # first collect all literals that appear in clauses
+        literals = []
+        def collect_literals(x):
+            if type(x) in (lg.Apply, lg.Eq):
+                literals.append(x)
+            else:
+                for y in x:
+                    collect_literals(y)
+        collect_literals(clauses.to_formula())
+
+        const_to_node = dict()
+        for tag, value in a.iteritems():
+            if tag[:2] == ('node_label', 'node_necessarily') and tag[3][0] == '=' and value:
+                const_to_node[tag[3][1:]] = tag[2]
+
+        elements = []
+        # now collect relevant graph elements
+        for lit in literals:
+            if type(lit) is lg.Eq:
+                elements += [(const_to_node[t.name],) for t in lit]
+            elif type(lit) is lg.Apply:
+                elements += [(const_to_node[t.name],) for t in lit.terms]
+                if lit.func.sort.arity == 2:
+                    elements.append((
+                        lit.func.name,
+                        const_to_node[lit.terms[0].name],
+                        const_to_node[lit.terms[1].name],
+                    ))
+            else:
+                assert False, lit
+
+        return tuple(set(elements))
+
+    def get_all_pre_facts(self):
+        # TODO: this is a bit hacky
+        return [
+            f for f in self.pre_state[1]
+            if type(f) is not lg.ForAll
+            and '@' not in str(f)
+        ]
+
     def find_relative_inductive_conjecture(self, button=None):
         """
         Looks for a subset of the selected conjecture that is relative inductive.
@@ -1226,9 +1300,6 @@ class TransitionViewWidget(ConceptSessionControls):
 
         TODO: this has a lot in common with is_inductive, check_inductiveness and is_sufficient, and minimize_conjecture
         should refactor common parts out
-
-        MAJOR TODO: go over the code and make sure it makes sense with function symbols (and also test on examples with function symbols)
-
         """
         from ivy_logic_utils import Clauses, and_clauses, dual_clauses, used_symbols_clauses, negate
         import ivy_transrel
@@ -1240,12 +1311,7 @@ class TransitionViewWidget(ConceptSessionControls):
         if False:
             facts = self.get_active_facts()
         else:
-            # complete hack to get all facts quickly (without the user generalization)
-            facts = [
-                f for f in self.pre_state[1]
-                if type(f) is not lg.ForAll
-                and '@' not in str(f)
-            ]
+            facts = self.get_all_pre_facts()
 
         n = len(facts)
         print "len(self.get_active_facts()) = {}".format(n)
@@ -1288,8 +1354,10 @@ class TransitionViewWidget(ConceptSessionControls):
             s_reach.add(c)
         s_reach.add(clauses_to_z3(post_clauses))
 
-        # create a solver that is used to check if a conjecture in the pre state implies another conjecture in the post state
+        # create a solver that is used to check if a conjecture in the
+        # pre state implies another conjecture in the post state
         def get_bool(name):
+            # use a nullary relation
             return lg.Apply(lg.Const(
                 name, lg.FunctionSort(lg.BooleanSort(),)),)
         guards = [get_bool('__guard_{}'.format(i))
@@ -1464,74 +1532,6 @@ class TransitionViewWidget(ConceptSessionControls):
             ]
             self.highligh_selected_facts()
             return True
-
-
-
-    def strengthen(self, button=None):
-        conj = self.get_selected_conjecture()
-        self.conjectures.append(conj)
-        self.show_result('Added the following conjecture:\n{}'.format(
-            conj.to_formula(),
-        ))
-
-    @interaction
-    def weaken(self, button=None):
-        user_selection = yield UserSelectMultiple(
-            options=[
-                (str(conj), conj)
-                for conj in self.conjectures
-            ],
-            title='Conjectures',
-            prompt='Select conjectures to remove',
-            default=()
-        )
-        if user_selection is not None:
-            for conj in user_selection:
-                self.conjectures.remove(conj)
-            self.show_result('Removed the following conjectures:\n{}'.format(
-                '\n'.join(str(conj) for conj in user_selection)
-            ))
-
-    def get_relevant_elements(self, a, clauses):
-        """
-        a is a concept abstract value dictionay. returns a list of nodes
-        and edges that appear in clauses
-        """
-        if a is None:
-            return []
-
-        # first collect all literals that appear in clauses
-        literals = []
-        def collect_literals(x):
-            if type(x) in (lg.Apply, lg.Eq):
-                literals.append(x)
-            else:
-                for y in x:
-                    collect_literals(y)
-        collect_literals(clauses.to_formula())
-
-        const_to_node = dict()
-        for tag, value in a.iteritems():
-            if tag[:2] == ('node_label', 'node_necessarily') and tag[3][0] == '=' and value:
-                const_to_node[tag[3][1:]] = tag[2]
-
-        elements = []
-        # now collect relevant graph elements
-        for lit in literals:
-            if type(lit) is lg.Eq:
-                elements += [(const_to_node[t.name],) for t in lit]
-            elif type(lit) is lg.Apply:
-                elements += [(const_to_node[t.name],) for t in lit.terms]
-                if lit.func.sort.arity == 2:
-                    elements.append((
-                        lit.func.name,
-                        const_to_node[lit.terms[0].name],
-                        const_to_node[lit.terms[1].name],
-                    ))
-            else:
-                assert False, lit
-
-        return tuple(set(elements))
 
 
 class AnalysisSessionWidget(object):
