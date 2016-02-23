@@ -25,8 +25,8 @@ unzip z3-4.4.1-x64-ubuntu-14.04.zip
 git clone -b automation https://github.com/odedp/ivy.git
 ln -s ~/ivy/ivy ~/.ipython/nbextensions/ivy
 # update firefox to version 44
-wget http://www.cs.tau.ac.il/~odedp/ivy_lib.tar.gz
-tar -xvf ivy_lib.tar.gz
+wget http://www.cs.tau.ac.il/~odedp/ivy_lib.zip
+unzip ivy_lib.zip
 ln -s ~/ivy_lib ~/ivy/ivy/lib
 # change 'waitSeconds: 7' to 'waitSeconds: 0' in /usr/local/lib/python2.7/dist-packages/IPython/html/static/components/requirejs/require.js
 
@@ -42,8 +42,8 @@ wget https://github.com/Z3Prover/z3/releases/download/z3-4.4.1/z3-4.4.1-x64-osx-
 unzip z3-4.4.1-x64-ubuntu-14.04.zip
 # add lines to .bash_profile to add z3 bin directory to PYTHONPATH (and possibly PATH)
 ln -s ~/ivy/ivy ~/.ipython/nbextensions/ivy
-wget http://www.cs.tau.ac.il/~odedp/ivy_lib.tar.gz
-tar -xvf ivy_lib.tar.gz
+wget http://www.cs.tau.ac.il/~odedp/ivy_lib.zip
+unzip ivy_lib.zip
 ln -s ~/ivy_lib ~/ivy/ivy/lib
 # change 'waitSeconds: 7' to 'waitSeconds: 0' in requires.js:
 sudo vi /Library/Frameworks/Python.framework/Versions/2.7/lib/python2.7/site-packages/IPython/html/static/components/requirejs/require.js
