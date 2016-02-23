@@ -1,17 +1,15 @@
 Ivy needs:
 
-python 2.7
-IPython 3.2.1
-ply (python lex yacc)
-Z3 python interface (import z3 should work)
-pygraphviz 1.3.1 (which requires graphviz)
+Python 2.7
+IPython 3.2.1 including notebook ("ipython notebook" should work)
+ply -Python Lex Yacc) ("import ply" should work)
+Z3 python interface ("import z3" should work)
 
-symbolic link (linux) or directory junction (windows) from ~/.ipython/nbextensions/ivy to ivy2/ivy
+symbolic link (linux) or directory junction (windows) from ~/.ipython/nbextensions/ivy to ivy/ivy
 
 On windows, the best way to get IPython and ply is to install Anaconda: http://continuum.io/downloads
 
-
-Log of installation on ivyvm (Ubuntu 14.04.3 64bit), all commands executed in ~:
+How to install on Ubuntu (tested on 14.04.3 64bit), all commands executed in ~:
 
 sudo apt-get install git
 sudo apt-get install python-pip
@@ -19,16 +17,33 @@ sudo apt-get install python-zmq
 sudo pip install markupsafe
 sudo pip install "ipython[all]==3.2.1"
 sudo pip install ply
-sudo apt-get install graphviz-dev
-sudo apt-get install python-dev
-sudo pip install "pygraphviz==1.3.1" --install-option="--include-path=/usr/include/graphviz" --install-option="--library-path=/usr/lib/graphviz/"
+sudo apt-get install graphviz
+dot -V # should work
 wget https://github.com/Z3Prover/z3/releases/download/z3-4.4.1/z3-4.4.1-x64-ubuntu-14.04.zip
 unzip z3-4.4.1-x64-ubuntu-14.04.zip
-# add lines to .bashrc to add z3 bin directory to PATH and PYTHONPATH
-git clone -b pldi16-artifact https://github.com/odedp/ivy.git
+# add lines to .bashrc to add z3 bin directory to PYTHONPATH (and possibly PATH)
+git clone -b automation https://github.com/odedp/ivy.git
 ln -s ~/ivy/ivy ~/.ipython/nbextensions/ivy
 # update firefox to version 44
 wget http://www.cs.tau.ac.il/~odedp/ivy_lib.tar.gz
 tar -xvf ivy_lib.tar.gz
 ln -s ~/ivy_lib ~/ivy/ivy/lib
 # change 'waitSeconds: 7' to 'waitSeconds: 0' in /usr/local/lib/python2.7/dist-packages/IPython/html/static/components/requirejs/require.js
+
+
+How to install on OSX (tested on OSX 10.9.5 x86_64, Darwin zaphod.local 13.4.0 Darwin Kernel Version 13.4.0: Sun Aug 17 19:50:11 PDT 2014; root:xnu-2422.115.4~1/RELEASE_X86_64 x86_64):
+
+git clone -b automation https://github.com/odedp/ivy.git
+# get python 2.7 and pip (pip is shipped with python 2.7.11)
+pip install "ipython[all]==3.2.1"
+pip install ply
+# download and install Grahpviz from http://www.graphviz.org/Download_macos.php
+wget https://github.com/Z3Prover/z3/releases/download/z3-4.4.1/z3-4.4.1-x64-osx-10.11.zip
+unzip z3-4.4.1-x64-ubuntu-14.04.zip
+# add lines to .bash_profile to add z3 bin directory to PYTHONPATH (and possibly PATH)
+ln -s ~/ivy/ivy ~/.ipython/nbextensions/ivy
+wget http://www.cs.tau.ac.il/~odedp/ivy_lib.tar.gz
+tar -xvf ivy_lib.tar.gz
+ln -s ~/ivy_lib ~/ivy/ivy/lib
+# change 'waitSeconds: 7' to 'waitSeconds: 0' in requires.js:
+sudo vi /Library/Frameworks/Python.framework/Versions/2.7/lib/python2.7/site-packages/IPython/html/static/components/requirejs/require.js
