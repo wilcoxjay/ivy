@@ -199,7 +199,7 @@ def dot_layout(cy_elements, transitive_edges, edge_weight=None):
     # assert p.returncode == 0 and png_error == '', png_error
     # open('g.png', 'w').write(png_output)
 
-    # now parse the dot output
+    # now parse the dot output (http://www.graphviz.org/doc/info/output.html#d:plain)
     lines = dot_output.splitlines()
     assert lines[0].startswith('graph ')
     assert lines[-1] == 'stop'
