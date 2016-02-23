@@ -5,13 +5,15 @@
 Use DOT to layout a graph for cytoscape.js
 
 TODO: add support for middle points in edges
+
+This version calls dot as a subprocess, so it doesn't require any
+python package, and just requires that graphviz is installed (dot
+should run from command line).
 """
 
 from __future__ import division
-
 from collections import deque, defaultdict
-
-from pygraphviz import AGraph
+import subprocess
 
 from ivy_utils import topological_sort
 
@@ -86,111 +88,160 @@ def get_approximation_points(bspline):
     return result
 
 
-def _to_position(st):
-    sp = st.split(',')
-    assert len(sp) == 2
-    return {
-        "x": float(sp[0]),
-        "y": -float(sp[1]),
-    }
+def repr_elements(elements):
+    from widget_cy_graph import CyGraphWidget
+    return repr(CyGraphWidget()._trait_to_json(elements))
 
 
-def _to_edge_position(st):
-    """
-    http://www.graphviz.org/doc/info/attrs.html#k:splineType
-    """
-    sp = st.split()
-    result = {}
-
-    if sp[0].startswith('e,'):
-        result["arrowend"] = _to_position(sp[0][2:])
-        sp = sp[1:]
-
-    if sp[0].startswith('s,'):
-        result["arrowstart"] = _to_position(sp[0][2:])
-        sp = sp[1:]
-
-    result["bspline"] = [_to_position(x) for x in sp]
-    result["approxpoints"] = get_approximation_points(result["bspline"])
-    # print "approxpoints: ", len(result["approxpoints"])
-
-    return result
-
-
-def dot_layout(cy_elements):
+def dot_layout(cy_elements, transitive_edges, edge_weight=None):
     """
     Get a CyElements object and augment it (in-place) with positions,
     widths, heights, and spline data from a dot based layout.
 
+    transitive_edges is a list of obj's of transitive edges.
+    edge_weight can be a dictionay mapping edge obj's to numeric weights.
+    If edge_weight is None, the default is 10 for transitive edges and 0 otherwise.
+
+    For example, the values used for the leader demo are:
+    transitive_edges=('reach', 'le')
+    edge_weight={'reach': 10, 'le': 10, 'id': 1}
+
     Returns the object.
     """
-    elements = cy_elements.elements
-    g = AGraph(directed=True, strict=False)
+    transitive_edges = frozenset(transitive_edges)
+    if edge_weight is None:
+        edge_weight = defaultdict(int, ((obj, 10) for obj in transitive_edges))
 
-    # make transitive relations appear top to bottom
-    # TODO: make this not specific to leader example
-    elements = list(elements)
+    elements = list(cy_elements.elements)
+    # open('g_before.txt', 'w').write(repr_elements(elements))
+
     nodes_by_id = dict(
         (e["data"]["id"], e)
         for e in elements if e["group"] == "nodes"
     )
+
+    # sort element to make transitive relations appear top to bottom
     order = [
         (nodes_by_id[e["data"]["source"]], nodes_by_id[e["data"]["target"]])
         for e in elements if
         e["group"] == "edges" and
-        e["data"]["obj"] in ('reach', 'le')
+        e["data"]["obj"] in transitive_edges
     ]
     elements = topological_sort(elements, order, lambda e: e["data"]["id"])
 
-    # add nodes to the graph
+    # group nodes by clusters
+    clusters = defaultdict(list)
+    nodes_with_no_cluster = []
     for e in elements:
         if e["group"] == "nodes":
-            g.add_node(e["data"]["id"], label=e["data"]["label"].replace('\n', '\\n'))
+            if e["data"]["cluster"] is not None:
+                clusters[e["data"]["cluster"]].append(e)
+            else:
+                nodes_with_no_cluster.append(e)
 
-    # TODO: remove this, it's specific to leader_demo
-    weight = {
-        'reach': 10,
-        'le': 10,
-        'id': 1,
-    }
-    constraint = {
-        'pending': False,
-    }
+    # create the dot input
 
-    # add edges to the graph
-    for e in elements:
-        if e["group"] == "edges":
-            g.add_edge(
-                e["data"]["source"],
-                e["data"]["target"],
-                e["data"]["id"],
-                weight=weight.get(e["data"]["obj"], 0),
-                #constraint=constraint.get(e["data"]["obj"], True),
-            )
+    g = 'digraph {\n'
 
-    # add clusters
-    clusters = defaultdict(list)
-    for e in elements:
-        if e["group"] == "nodes" and e["data"]["cluster"] is not None:
-            clusters[e["data"]["cluster"]].append(e["data"]["id"])
-    for i, k in enumerate(sorted(clusters.keys())):
-        g.add_subgraph(
-            name='cluster_{}'.format(i),
-            nbunch=clusters[k],
+    # add nodes to the graph
+
+    def dot_node(e):
+        # support unicode in labels, and handle newlines and double quotes (currently not handling other characters)
+        return u'{} [label="{}"];\n'.format(
+            e["data"]["id"],
+            e["data"]["label"].replace('\n', '\\n').replace('"', '\\"'),
         )
 
-    # now get positions, heights, widths, and bsplines
-    g.layout(prog='dot')
+    for e in nodes_with_no_cluster:
+        g += '  ' + dot_node(e)
+    for i, k in enumerate(sorted(clusters.keys())):
+        g += '  subgraph cluster_{} {{\n'.format(i)
+        for e in clusters[k]:
+            g += '    ' + dot_node(e)
+        g += '  }\n'
+
+    # add edges to the graph
+    # make edges unique by color
+    edges = [e for e in elements if e["group"] == "edges"]
+    for i, e in enumerate(edges):
+        g += '  {} -> {} [weight={},color="#{:06d}"];\n'.format(
+            e["data"]["source"],
+            e["data"]["target"],
+            edge_weight[e["data"]["obj"]],
+            i,
+        )
+
+    g += '}\n'
+
+    # open('g_before.dot', 'w').write(g.encode('utf8'))
+
+    # now call dot using the plain output format
+    p = subprocess.Popen(
+        ['dot', '-Tplain'],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    dot_output, dot_error = p.communicate(g.encode('utf8'))
+    assert p.returncode == 0 and dot_error == '', dot_error
+
+    # open('g_after.dot', 'w').write(dot_output)
+    # # write g.png
+    # p = subprocess.Popen(
+    #     ['dot', '-Tpng'],
+    #     stdin=subprocess.PIPE,
+    #     stdout=subprocess.PIPE,
+    #     stderr=subprocess.PIPE,
+    # )
+    # png_output, png_error = p.communicate(g.encode('utf8'))
+    # assert p.returncode == 0 and png_error == '', png_error
+    # open('g.png', 'w').write(png_output)
+
+    # now parse the dot output
+    lines = dot_output.splitlines()
+    assert lines[0].startswith('graph ')
+    assert lines[-1] == 'stop'
+    lines = lines[1:-1]
+    dot_result = {}  # nodes kept by id (string), edges kept by index in edges (int)
+    for line in lines:
+        sp = line.split()
+        if sp[0] == 'node':
+            dot_result[sp[1]] = dict(
+                x=float(sp[2]),
+                y=float(sp[3]),
+                width=float(sp[4]),
+                height=float(sp[5]),
+            )
+        elif sp[0] == 'edge':
+            assert sp[-1][0] == '#', line
+            i = int(sp[-1][1:])
+            n = int(sp[3])
+            dot_result[i] = [float(x) for x in sp[4:4 + 2 * n]]
+        else:
+            assert False, line
+
+    # now add layout info to elements
+
+    # add layout info to nodes: position, width, height
     for e in elements:
         if e["group"] == "nodes":
-            attr = g.get_node(e["data"]["id"]).attr
-            e["position"] = _to_position(attr['pos'])
-            e["data"]["width"] = 72 * float(attr['width'])
-            e["data"]["height"] = 72 * float(attr['height'])
+            attr = dot_result[e["data"]["id"]]
+            e["position"] = {
+                "x": 72.0 * attr['x'],
+                "y": -72.0 * attr['y'],
+            }
+            e["data"]["width"] = 72.0 * attr['width']
+            e["data"]["height"] = 72.0 * attr['height']
 
-        elif e["group"] == "edges":
-            attr = g.get_edge(e["data"]["source"], e["data"]["target"], e["data"]["id"]).attr
-            e["data"].update(_to_edge_position(attr['pos']))
-    g.draw('g.png')
+    # add layout info to edges: bspline and approxpoints
+    for i, e in enumerate(edges):
+        coords = dot_result[i]
+        bspline = [
+            {"x": 72.0 * coords[i], "y": -72.0 * coords[i + 1]}
+            for i in range(0, len(coords), 2)
+        ]
+        e["data"]["bspline"] = bspline
+        e["data"]["approxpoints"] = get_approximation_points(bspline)
 
+    # open('g_after.txt', 'w').write(repr_elements(elements))
     return cy_elements

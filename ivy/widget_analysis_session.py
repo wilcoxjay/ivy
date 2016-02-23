@@ -13,6 +13,7 @@ from itertools import chain
 import os.path
 from cPickle import dumps
 import time
+import datetime
 
 import IPython.html.widgets as widgets
 from IPython.html.widgets import HBox, VBox
@@ -43,8 +44,20 @@ from ivy_logic_utils import true_clauses, false_clauses
 import logic as lg
 import logic_util as lu
 
+_last_timestamp = None
+def timestamp():
+    global _last_timestamp
+    current = datetime.datetime.now()
+    if _last_timestamp is not None:
+        elapsed = current - _last_timestamp
+    else:
+        elapsed = current - current
+    _last_timestamp = current
 
-
+    return '[{} | {}]\n'.format(
+        current.strftime('%H:%M:%S') + '{:.1f}'.format(current.microsecond / 1e6)[1:],
+        elapsed
+    )
 
 def _print_args(*args, **kwargs):
     print args, kwargs
@@ -105,6 +118,8 @@ class ConceptSessionControls(object):
             ('diagram domain', self.diagram_domain),
         ])
 
+        self.transitive_relations = frozenset()
+
         view_control_header_buttons = []
         for label, edge_class in zip(['+', '?', '-', u'\u2264'], _edge_display_checkboxes):
             btn = SmallButton(
@@ -149,6 +164,12 @@ class ConceptSessionControls(object):
     def change_display_checkbox(self):
         if self.ignore_display_checkbox_change:
             return
+
+        self.transitive_relations = frozenset(
+            edge_name
+            for edge_name, x in self.edge_display_checkboxes.iteritems()
+            if x['transitive'].value
+        )
 
         self.concept_session.domain.combinations = get_standard_combinations()
 
@@ -439,7 +460,7 @@ class ConceptStateViewWidget(ConceptSessionControls):
         self.graph.cy_style = self.get_concept_style()
 
     def render_graph(self):
-        self.graph.cy_elements = dot_layout(render_concept_graph(self))
+        self.graph.cy_elements = dot_layout(render_concept_graph(self), self.transitive_relations)
 
     def render(self):
         self.info_area.value = ''
@@ -494,8 +515,6 @@ class TransitionViewWidget(ConceptSessionControls):
     def __init__(self, analysis_session_widget):
         super(TransitionViewWidget, self).__init__()
         self.analysis_session_widget = analysis_session_widget
-
-        self.transitive_relations = []
 
         self.box = DialogWidget(
             title='TransitionViewWidget',
@@ -685,7 +704,7 @@ class TransitionViewWidget(ConceptSessionControls):
             self.concept_session.state = formula
             self.concept_session.cache = cache
             self.concept_session.recompute()
-            elements.append(dot_layout(render_concept_graph(self)))
+            elements.append(dot_layout(render_concept_graph(self), self.transitive_relations))
             self.concept_session.state = Or()
             self.concept_session.cache = None
         for g, e in zip(graphs, elements):
@@ -1089,7 +1108,6 @@ class TransitionViewWidget(ConceptSessionControls):
 
         self.edge_display_checkboxes['=']['transitive'].value = True
         self.edge_display_checkboxes['=']['all_to_all'].value = True
-        self.transitive_relations = []
 
         axioms = self.session.analysis_state.ivy_interp.background_theory()
         for c in self.session.analysis_state.ivy_interp.sig.symbols.values():
@@ -1104,7 +1122,6 @@ class TransitionViewWidget(ConceptSessionControls):
                 defined_symmetry = lg.ForAll([X, Y], lg.Or(c(X,X), lg.Not(c(Y,Y))))
                 t = Clauses([transitive, defined_symmetry])
                 if clauses_imply(axioms, t):
-                    self.transitive_relations.append(c.name)
                     self.edge_display_checkboxes[c.name]['transitive'].value = True
 
     def is_sufficient(self, button=None):
@@ -1302,13 +1319,17 @@ class TransitionViewWidget(ConceptSessionControls):
         s_step.add(clauses_to_z3(post_clauses))
 
         lm = LatticeMap(n)
-        print "Starting while True loop"
+        if n > 100:
+            print timestamp(), "Too many facts", n
+            return False
+
+        print timestamp(), "Starting while True loop", datetime.datetime.now()
         for i in range(n):
             print "    ", i, facts[i]
         relative_inductive = []
         pre_at_most = 1
         while pre_at_most <= 5: # TODO change this hardcoded 5
-            print '=== while True ===', "pre_at_most = ", pre_at_most
+            print timestamp(), '=== while True ===', "pre_at_most = ", pre_at_most
             sample = lm.sample(pre_at_most)
             if sample is None:
                 pre_at_most += 1
@@ -1421,7 +1442,7 @@ class TransitionViewWidget(ConceptSessionControls):
         # got out of the loop with no conjecture
         if len(relative_inductive) == 0:
             msg = 'No relative inductive generalization found.'
-            print '\n' + msg + '\n'
+            print timestamp(), '\n' + msg + '\n'
             self.show_result(msg)
             return False
         else:
@@ -1430,7 +1451,7 @@ class TransitionViewWidget(ConceptSessionControls):
                 '\n'.join(str(self.get_selected_conjecture(fs)) for fs in relative_inductive)
             )
             self.show_result(msg)
-            print '\n' + msg + '\n'
+            print timestamp(), '\n' + msg + '\n'
             # override the fact list - replace gather facts to get high arity facts
             self.facts_list.options = [
                 (self.fact_to_label(formula), (formula, ()))
@@ -1685,19 +1706,19 @@ class AnalysisSessionWidget(object):
             analysis_state.goal_stack,
             node_events=self.proof_node_events,
             node_actions=lambda goal: list(chain(*goal_node_actions(self, goal))),
-        ))
+        ), ())
 
         self.arg.cy_elements = dot_layout(render_rg(
             analysis_state.ivy_ag,
             self.arg_node_events,
             node_actions=lambda s: list(chain(*arg_node_actions(self, s))),
-        ))
+        ), ())
 
         self.crg.cy_elements = dot_layout(render_rg(
             analysis_state.crg,
             self.crg_node_events,
             node_actions=lambda node: [],
-        ))
+        ), ())
 
         msg = step_info.get('msg', '')
         tactic = step_info.get('tactic', '?')
