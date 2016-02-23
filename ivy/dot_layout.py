@@ -181,6 +181,7 @@ def dot_layout(cy_elements, transitive_edges, edge_weight=None):
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        shell=True, # to search PATH on windows
     )
     dot_output, dot_error = p.communicate(g.encode('utf8'))
     assert p.returncode == 0 and dot_error == '', dot_error
@@ -192,6 +193,7 @@ def dot_layout(cy_elements, transitive_edges, edge_weight=None):
     #     stdin=subprocess.PIPE,
     #     stdout=subprocess.PIPE,
     #     stderr=subprocess.PIPE,
+    #     shell=True, # to search PATH on windows
     # )
     # png_output, png_error = p.communicate(g.encode('utf8'))
     # assert p.returncode == 0 and png_error == '', png_error
