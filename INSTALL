@@ -1,49 +1,142 @@
-Ivy needs:
+Overview (see below for detailed installation instructions for Ubuntu, OSX and Windows):
 
+To run ivy, you need:
+Firefox 44 or higher
 Python 2.7
-IPython 3.2.1 including notebook ("ipython notebook" should work)
-ply -Python Lex Yacc) ("import ply" should work)
-Z3 python interface ("import z3" should work)
+IPython 3.2.1 (not 4.x), including notebook. The command "ipython notebook" should work.
+ply -Python Lex Yacc. The python command "import ply" should work.
+Z3 python interface. The python command "import z3" should work.
+A symbolic link (linux) or directory junction (windows) from ~/.ipython/nbextensions/ivy to ivy/ivy.
+External dependencies found at http://www.cs.tau.ac.il/~odedp/ivy_lib.zip unzipped to ivy/ivy/lib.
 
-symbolic link (linux) or directory junction (windows) from ~/.ipython/nbextensions/ivy to ivy/ivy
+The ivy web based user interface is currently supported only
+inFirefox, version 44 or higher.
 
-On windows, the best way to get IPython and ply is to install Anaconda: http://continuum.io/downloads
 
 How to install on Ubuntu (tested on 14.04.3 64bit), all commands executed in ~:
 
+# basic ubuntu packages needed:
 sudo apt-get install git
+sudo apt-get install graphviz
 sudo apt-get install python-pip
 sudo apt-get install python-zmq
+
+# Check that dot can be run from the command line:
+dot -V # should work
+
+# Get a recent version of Firefox (version 44 or higher).
+
+# python packages installed using pip:
 sudo pip install markupsafe
 sudo pip install "ipython[all]==3.2.1"
 sudo pip install ply
-sudo apt-get install graphviz
-dot -V # should work
+
+# Check that IPython is installed and the notebook works:
+ipython --version
+ipython notebook # should start a notebook server and open a browser window
+
+# Download and unzip Z3:
 wget https://github.com/Z3Prover/z3/releases/download/z3-4.4.1/z3-4.4.1-x64-ubuntu-14.04.zip
 unzip z3-4.4.1-x64-ubuntu-14.04.zip
 # add lines to .bashrc to add z3 bin directory to PYTHONPATH (and possibly PATH)
+# Check that you can run the python command "import z3"
+
+# Clone the ivy repository (assuming you clone to ~/ivy)
 git clone -b automation https://github.com/odedp/ivy.git
+# Create a symbolic link to IPython nbextensions directory
 ln -s ~/ivy/ivy ~/.ipython/nbextensions/ivy
-# update firefox to version 44
+# Download ivy external dependencies
 wget http://www.cs.tau.ac.il/~odedp/ivy_lib.zip
 unzip ivy_lib.zip
 ln -s ~/ivy_lib ~/ivy/ivy/lib
-# change 'waitSeconds: 7' to 'waitSeconds: 0' in /usr/local/lib/python2.7/dist-packages/IPython/html/static/components/requirejs/require.js
+# Change 'waitSeconds: 7' to 'waitSeconds: 0' in requires.js:
+sudo vi /usr/local/lib/python2.7/dist-packages/IPython/html/static/components/requirejs/require.js
+
+# Run ivy:
+cd ~/ivy/examples/pldi16
+python ../../ivy/ivy2.py leader_election_ring.ivy # should start a browser window with the leader election example
 
 
 How to install on OSX (tested on OSX 10.9.5 x86_64, Darwin zaphod.local 13.4.0 Darwin Kernel Version 13.4.0: Sun Aug 17 19:50:11 PDT 2014; root:xnu-2422.115.4~1/RELEASE_X86_64 x86_64):
 
-git clone -b automation https://github.com/odedp/ivy.git
-# get python 2.7 and pip (pip is shipped with python 2.7.11)
+# Download and install Grahpviz from http://www.graphviz.org/Download_macos.php
+# Check that dot can be run from the command line:
+dot -V # should work
+
+# Get a recent version of Firefox (version 44 or higher).
+
+# Get Python 2.7 and pip (pip is shipped with Python 2.7.11)
+# install ipython and ply using pip
 pip install "ipython[all]==3.2.1"
 pip install ply
-# download and install Grahpviz from http://www.graphviz.org/Download_macos.php
-wget https://github.com/Z3Prover/z3/releases/download/z3-4.4.1/z3-4.4.1-x64-osx-10.11.zip
+
+# Check that IPython is installed and the notebook works:
+ipython --version # should be 3.2.1
+ipython notebook # should start a notebook server and open a browser window
+
+# Download and unzip Z3:
+wget https://github.com/Z3Prover/z3/releases/download/z3-4.4.1/z3-4.4.1-x64-ubuntu-14.04.zip
 unzip z3-4.4.1-x64-ubuntu-14.04.zip
-# add lines to .bash_profile to add z3 bin directory to PYTHONPATH (and possibly PATH)
+# add lines to .bashrc or .bash_profile to add z3 bin directory to PYTHONPATH (and possibly PATH)
+# Check that you can run the python command "import z3"
+
+# Clone the ivy repository (assuming you clone to ~/ivy)
+git clone -b automation https://github.com/odedp/ivy.git
+# Create a symbolic link to IPython nbextensions directory
 ln -s ~/ivy/ivy ~/.ipython/nbextensions/ivy
+# Download ivy external dependencies
 wget http://www.cs.tau.ac.il/~odedp/ivy_lib.zip
 unzip ivy_lib.zip
-ln -s ~/ivy_lib ~/ivy/ivy/lib
-# change 'waitSeconds: 7' to 'waitSeconds: 0' in requires.js:
+ln -s ivy_lib ~/ivy/ivy/lib
+
+# Change 'waitSeconds: 7' to 'waitSeconds: 0' in requires.js:
 sudo vi /Library/Frameworks/Python.framework/Versions/2.7/lib/python2.7/site-packages/IPython/html/static/components/requirejs/require.js
+
+# Run ivy:
+cd ~/ivy/examples/pldi16
+python ../../ivy/ivy2.py leader_election_ring.ivy # should start a browser window with the leader election example
+
+
+How to install on Windows:
+
+# Download and install Grahpviz from http://www.graphviz.org/Download_windows.php
+# Check that dot can be run from the command line:
+dot -V # should work
+
+# Get a recent version of Firefox (version 44 or higher).
+
+# Get Python 2.7 and pip (pip is shipped with Python 2.7.11)
+# A good way to get this on Windows is using Anaconda: http://continuum.io/downloads
+
+# Check which version of IPython you have (if any)
+ipython --version
+# if you have Anaconda with IPython other than 3.2.1, then remove it:
+conda uninstall ipython
+# use pip to install IPython 3.2.1 with IPython notebook
+pip install "ipython[all]==3.2.1"
+
+# Check that IPython is installed and the notebook works:
+ipython --version # should be 3.2.1
+ipython notebook # should start a notebook server and open a browser window
+
+# Check if you can run the python command "import ply", if no, install ply:
+# option 1, using pip:
+pip install ply
+# option 2, using conda install:
+conda install ply
+# Make sure you can run the python command "import ply"
+
+# Download and Z3 from https://github.com/Z3Prover/z3/releases and unzip to Z3DIR
+# Add Z3DIR/bin to the environment variable PYTHONPATH (and possibly PATH to access z3 from command line)
+# Check that you can run the python command "import z3"
+
+# Clone the ivy repository (assuming you clone to BASEDIR\ivy)
+git clone -b automation https://github.com/odedp/ivy.git
+# Create a directory junction to IPython nbextensions directory
+mklink /J %USERPROFILE%\.ipython\nbextensions\ivy BASEDIR\ivy\ivy
+# Download ivy external dependencies from http://www.cs.tau.ac.il/~odedp/ivy_lib.zip
+# and unsip. Rename the ivy_lib directory to BASEDIR\ivy\ivy\lib.
+
+# Run ivy:
+cd BASEDIR\ivy\examples\pldi16
+python ..\..\ivy\ivy2.py leader_election_ring.ivy # should start a browser window with the leader election example
