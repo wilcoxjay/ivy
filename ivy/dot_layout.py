@@ -176,12 +176,13 @@ def dot_layout(cy_elements, transitive_edges, edge_weight=None):
     # open('g_before.dot', 'w').write(g.encode('utf8'))
 
     # now call dot using the plain output format
+    # use shell=True to search PATH on windows
     p = subprocess.Popen(
-        ['dot', '-Tplain'],
+        'dot -Tplain',
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        shell=True, # to search PATH on windows
+        shell=True,
     )
     dot_output, dot_error = p.communicate(g.encode('utf8'))
     assert p.returncode == 0 and dot_error == '', dot_error
@@ -201,8 +202,8 @@ def dot_layout(cy_elements, transitive_edges, edge_weight=None):
 
     # now parse the dot output (http://www.graphviz.org/doc/info/output.html#d:plain)
     lines = dot_output.splitlines()
-    assert lines[0].startswith('graph ')
-    assert lines[-1] == 'stop'
+    assert lines[0].startswith('graph '), lines[0]
+    assert lines[-1] == 'stop', lines[-1]
     lines = lines[1:-1]
     dot_result = {}  # nodes kept by id (string), edges kept by index in edges (int)
     for line in lines:
