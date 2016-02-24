@@ -54,7 +54,7 @@ def timestamp():
         elapsed = current - current
     _last_timestamp = current
 
-    return '[{} | {}]\n'.format(
+    return '[{} | {}] '.format(
         current.strftime('%H:%M:%S') + '{:.1f}'.format(current.microsecond / 1e6)[1:],
         elapsed
     )
@@ -1246,7 +1246,7 @@ class TransitionViewWidget(ConceptSessionControls):
 
     def get_relevant_elements(self, a, clauses):
         """
-        a is a concept abstract value dictionay. returns a list of nodes
+        a is a concept abstract value dictionary. returns a list of nodes
         and edges that appear in clauses
         """
         if a is None:
@@ -1532,6 +1532,500 @@ class TransitionViewWidget(ConceptSessionControls):
             ]
             self.highligh_selected_facts()
             return True
+
+
+
+    # the new algorithm to find inductive invariants
+    # this should later move to a new class
+
+    def le(self, a1, a2):
+        """
+        Abstract domain order, by subsumption
+
+        Elements in the domain are sets of sets of literals (CNF)
+        """
+        return all(any(frozenset(c1) <= frozenset(c2) for c1 in a1) for c2 in a2)
+
+    def get_mus(self, s, args, fixed=()):
+        """
+        s should be a Z3 solver that just returned unsat to:
+        s.check(*set(fixed + args)).
+
+        Returns a minimal subset a of args such that
+        s.check(*(fixed + a)) is also unsat.
+        """
+        global oded
+        oded = s, args, fixed
+        args = list(args)
+        fixed = list(fixed)
+        args_ids = set(x.get_id() for x in args)
+        a = [x for x in s.unsat_core() if x.get_id() in args_ids]
+        mus = []
+        while len(a) > 0:
+            res = s.check(*(fixed + mus + a[1:]))
+            if res == z3.sat:
+                mus.append(a[0])
+                args_ids.remove(a[0].get_id())
+                a = a[1:]
+            elif res == z3.unsat:
+                a = [x for x in s.unsat_core() if x.get_id() in args_ids]
+            else:
+                assert False, res
+        return mus
+
+    def alpha_init(self):
+        """
+        Return the abstraction of the initial state
+
+        The initial state is taken as all steps reachable from the
+        true initial state by n steps, where n is given by the BMC
+        bound (so 0 gives the real initial state)
+        """
+        from ivy_logic_utils import Clauses, and_clauses, dual_clauses, used_symbols_clauses, negate, clause_to_formula
+        from ivy_logic_utils import Clauses, and_clauses, dual_clauses, used_symbols_clauses, negate, clause_to_formula
+        import ivy_transrel
+        from ivy_solver import atom_to_z3, formula_to_z3, clauses_to_z3
+        import tactics_api as ta
+        from proof import ProofGoal
+        from ivy_logic_utils import Clauses, and_clauses, dual_clauses
+
+
+        # convert self.A to a list of lists of literals
+        A = [[lit for lit in c] for c in self.A]
+
+        init_action = ta.get_action('initialize')
+        step_action = ta.get_action('step')
+        n_steps = self.bmc_bound.value # n_steps = 0 gives the real initial state
+        axioms = self.session.analysis_state.ivy_interp.background_theory()
+
+        # create a solver that is used to test if a conjecture is true
+        # at "Init", which is actually definded as all reachable
+        # states upto BMC bound
+        ag = self.new_ag()
+        with ag.context as ac:
+            ac.new_state(ag.init_cond)
+        post = ag.execute(init_action, None, None, 'initialize')
+        for i in range(n_steps):
+            post = ag.execute(step_action, None, None, 'step')
+            # TODO: check if the axioms get added to every step
+        post_clauses = and_clauses(post.clauses, axioms)
+        used_names = (
+            frozenset(x.name for x in self.session.analysis_state.ivy_interp.sig.symbols.values()) |
+            frozenset(x.name for x in used_symbols_clauses(post_clauses))
+        )
+        assert not any(
+            const.is_skolem() and const.name in used_names
+            for const in used_constants(*(lit for c in A for lit in c))
+        ), used_names
+        s_init = z3.Solver()
+        s_init.add(clauses_to_z3(post_clauses))
+        lit_guards = [
+            [
+                z3.Const("__lit_guard_{}_{}".format(i, j), z3.BoolSort())
+                for j, lit in enumerate(c)
+            ]
+            for i, c in enumerate(A)
+        ]
+        clause_guards = [
+            z3.Const("__clause_guard_{}".format(i), z3.BoolSort())
+            for i, c in enumerate(A)
+        ]
+        s_init.add(z3.Or(*(
+            z3.And(z3.Not(clause_guards[i]), *(
+                z3.Implies(lit_guards[i][j], formula_to_z3(negate(lit)))
+                for j, lit in enumerate(c)
+            ))
+            for i, c in enumerate(A)
+        )))
+        # print '\n\n', s_init, '\n\n'
+
+        def SAT(args):
+            res = s_init.check(*args)
+            assert res in (z3.sat, z3.unsat)
+            return res == z3.sat
+
+        result = dict()
+
+        for ci, c in enumerate(A):
+            result[frozenset(c)] = top
+            n = len(c)
+            lm = LatticeMap(n)
+            print '\n', timestamp(), "Checking alpha_init of clause:", datetime.datetime.now()
+            for i in range(n):
+                print '    ', i, c[i]
+            cg = select(clause_guards, range(0, ci) + range(ci + 1, len(A)))
+
+            while True:
+                print timestamp(), '==='
+                sample = lm.sample(0,6)
+                if sample is None:
+                    break
+
+
+                post_facts = [i for i in range(n)
+                              if ('post', i) in sample]
+
+                # check if the negation of the pre facts is reachable
+                if SAT(cg + select(lit_guards[ci], post_facts)):
+                    print "SAT, growing..."
+                    # grow by adding to pre until it is maximal satisfiable
+                    current = post_facts
+                    for i in range(n):
+                        if (i not in current and
+                            SAT(cg + select(lit_guards[ci], current + [i]))):
+                            current.append(i)
+                        else:
+                            pass
+                    assert SAT(cg + select(lit_guards[ci], current)) # TODO remove this
+                    # block any conjecture that is stronger than
+                    # current, since current is already not implied by Init
+                    lm.block_non_implication([], current)
+                    continue
+                else:
+                    print "UNSAT, shrinking..."
+                    mus = self.get_mus(s_init, select(lit_guards[ci], post_facts), cg)
+                    mus_ids = frozenset(x.get_id() for x in mus)
+                    current = [i for i in range(n)
+                               if lit_guards[ci][i].get_id() in mus_ids]
+                    assert not SAT(cg + select(lit_guards[ci], current)) # TODO remove this
+                    # block any conjecture weaker than current, as
+                    # current is already implied by Init
+                    lm.block_implication([], current)
+                    result[frozenset(c)] |= frozenset([frozenset(c[i] for i in current)])
+
+        return result
+
+    def alpha_step(self, abs_pre):
+        """
+        Return the abstraction of the post state of abs_pre, joined with abs_pre.
+        """
+        from ivy_logic_utils import Clauses, and_clauses, dual_clauses, used_symbols_clauses, negate, clause_to_formula
+        from ivy_logic_utils import Clauses, and_clauses, dual_clauses, used_symbols_clauses, negate, clause_to_formula
+        import ivy_transrel
+        from ivy_solver import atom_to_z3, formula_to_z3, clauses_to_z3
+        import tactics_api as ta
+        from proof import ProofGoal
+        from ivy_logic_utils import Clauses, and_clauses, dual_clauses
+
+
+        # convert self.A to a list of lists of literals
+        A = [[lit for lit in c] for c in self.A]
+
+        init_action = ta.get_action('initialize')
+        step_action = ta.get_action('step')
+        axioms = self.session.analysis_state.ivy_interp.background_theory()
+
+        ################################
+        # TODO: use this later, for now I'm doing something simpler
+        # # create a solver that is used to check if a CNF in the pre
+        # # state implies a clause in the post state
+        # def get_bool(name):
+        #     # use a nullary relation
+        #     return lg.Apply(lg.Const(
+        #         name, lg.FunctionSort(lg.BooleanSort(),)),)
+        # lg_pre_lit_guards = [
+        #     [
+        #         get_bool("__pre_lit_guard_{}_{}".format(i, j))
+        #         for j, lit in enumerate(c)
+        #     ]
+        #     for i, c in enumerate(A)
+        # ]
+        # lg_pre_clause_guards = [
+        #     get_bool("__pre_clause_guard_{}".format(i))
+        #     for i, c in enumerate(A)
+        # ]
+        # pre_lit_guards = [[atom_to_z3(g) for x in y] for y in lg_pre_lit_guards]
+        # pre_clause_guards = [atom_to_z3(g) for g in lg_pre_clause_guards]
+        # ag = self.new_ag()
+        # pre = State(self.session.analysis_state.ivy_interp)
+        # pre.clauses = and_clauses(axioms, *(
+        #     self.get_selected_conjecture([lg_pre_clause_guards[i]] + [
+        #         lg.Or(lg_pre_lit_guards[i][j], negate(lit))
+        #         for j, lit in enumerate(c)
+        #     ])
+        #     for i, c in enumerate(A)
+        # ))
+        ################################
+
+        ag = self.new_ag()
+        pre = State(self.session.analysis_state.ivy_interp)
+        pre.clauses = and_clauses(axioms, *(
+            self.get_selected_conjecture([negate(lit) for lit in b])
+            for bs in abs_pre.values()
+            for b in bs
+        ))
+        post = ag.execute(step_action, pre, None, 'step')
+        post_clauses = and_clauses(post.clauses, axioms)
+        used_names = (
+            frozenset(x.name for x in self.session.analysis_state.ivy_interp.sig.symbols.values()) |
+            frozenset(x.name for x in used_symbols_clauses(post_clauses))
+        )
+        assert not any(
+            const.is_skolem() and const.name in used_names
+            for const in used_constants(*(lit for c in A for lit in c))
+        )
+        s_step = z3.Solver()
+        s_step.add(clauses_to_z3(post_clauses))
+        post_lit_guards = [
+            [
+                z3.Const("__post_lit_guard_{}_{}".format(i, j), z3.BoolSort())
+                for j, lit in enumerate(c)
+            ]
+            for i, c in enumerate(A)
+        ]
+        post_clause_guards = [
+            z3.Const("__post_clause_guard_{}".format(i), z3.BoolSort())
+            for i, c in enumerate(A)
+        ]
+        s_step.add(z3.Or(*(
+            z3.And(z3.Not(post_clause_guards[i]), *(
+                z3.Implies(post_lit_guards[i][j], formula_to_z3(negate(lit)))
+                for j, lit in enumerate(c)
+            ))
+            for i, c in enumerate(A)
+        )))
+        def SAT(args):
+            global oded
+            oded = s_step, args
+            res = s_step.check(*args)
+            assert res in (z3.sat, z3.unsat), res
+            return res == z3.sat
+
+        result = dict()
+
+        for ci, c in enumerate(A):
+            # TODO: change this to also change the pre, and not just the post...
+
+            result[frozenset(c)] = top
+            n = len(c)
+            lm = LatticeMap(n)
+            print '\n', timestamp(), "Checking alpha_step of clause:", datetime.datetime.now()
+            for i in range(n):
+                print '    ', i, c[i]
+            cg = select(post_clause_guards, range(0, ci) + range(ci + 1, len(A)))
+
+            while True:
+                print timestamp(), '=== new sample ==='
+                sample = lm.sample(0,6)
+                if sample is None:
+                    break
+
+                post_facts = [i for i in range(n)
+                              if ('post', i) in sample]
+
+                # check if the current conjecture is implied
+                if SAT(cg + select(post_lit_guards[ci], post_facts)):
+                    print "SAT, growing..."
+                    # grow by adding to pre until it is maximal satisfiable
+                    current = post_facts
+                    for i in range(n):
+                        if (i not in current and
+                            SAT(cg + select(post_lit_guards[ci], current + [i]))):
+                            current.append(i)
+                        else:
+                            pass
+                    assert SAT(cg + select(post_lit_guards[ci], current)) # TODO remove this
+                    # block any conjecture that is stronger than
+                    # current, since current is already not implied by Step
+                    lm.block_non_implication([], current)
+                    continue
+                else:
+                    print "UNSAT, shrinking..."
+                    mus = self.get_mus(s_step, select(post_lit_guards[ci], post_facts), cg)
+                    mus_ids = frozenset(x.get_id() for x in mus)
+                    current = [i for i in range(n)
+                               if post_lit_guards[ci][i].get_id() in mus_ids]
+                    assert not SAT(cg + select(post_lit_guards[ci], current)) # TODO remove this
+                    # block any conjecture weaker than current, as
+                    # current is already implied by Step
+                    lm.block_implication([], current)
+                    result[frozenset(c)] |= frozenset([frozenset(c[i] for i in current)])
+
+        return result
+
+    def step_model(self, abs_pre, v):
+        """
+        Return s1, s2 such that s1 satisfies abs_pre, s1 makes a step to
+        s2, and s2 violates the clause v.
+
+        TODO: This has so much in common with check_inductiveness that it's a crime not to refactor...
+        """
+        import ivy_transrel
+        from ivy_solver import get_small_model
+        import tactics_api as ta
+        from proof import ProofGoal
+        from ivy_logic_utils import Clauses, and_clauses, dual_clauses, used_symbols_clauses, negate, clause_to_formula
+        from random import randrange
+        from ivy_logic_utils import Clauses, and_clauses, dual_clauses, used_symbols_clauses, negate, clause_to_formula
+        import ivy_transrel
+        from ivy_solver import atom_to_z3, formula_to_z3, clauses_to_z3
+        import tactics_api as ta
+        from proof import ProofGoal
+        from ivy_logic_utils import Clauses, and_clauses, dual_clauses
+
+
+        # convert self.A to a list of lists of literals
+        A = [[lit for lit in c] for c in self.A]
+
+        init_action = ta.get_action('initialize')
+        step_action = ta.get_action('step')
+        axioms = self.session.analysis_state.ivy_interp.background_theory()
+
+        ag = self.new_ag()
+        pre = State(self.session.analysis_state.ivy_interp)
+        pre.clauses = and_clauses(axioms, *(
+            self.get_selected_conjecture([negate(lit) for lit in b])
+            for bs in abs_pre.values()
+            for b in bs
+        ))
+        post = ag.execute(step_action, pre, None, 'step')
+        post.clauses = true_clauses()
+        conj = self.get_selected_conjecture([negate(lit) for lit in v])
+        assert conj.is_universal_first_order()
+        used_names = frozenset(x.name for x in self.session.analysis_state.ivy_interp.sig.symbols.values())
+        def witness(v):
+            c = lg.Const('@' + v.name, v.sort)
+            assert c.name not in used_names
+            return c
+        clauses = dual_clauses(conj, witness)
+        history = ag.get_history(post)
+
+        # TODO: this is still a bit hacky, and without nice error reporting
+        if self.relations_to_minimize.value == 'relations to minimize':
+            self.relations_to_minimize.value = ' '.join(sorted(
+                k for k, v in self.session.analysis_state.ivy_interp.sig.symbols.iteritems()
+                if (type(v.sort) is lg.FunctionSort and
+                    v.sort.range == lg.Boolean and
+                    v.name not in self.transitive_relations and
+                    '.' not in v.name
+                )
+            ))
+
+        res = ag.bmc(post, clauses, None, None, lambda clauses: get_small_model(
+            clauses,
+            sorted(self.session.analysis_state.ivy_interp.sig.sorts.values()),
+            [
+                # TODO: this is still a bit hacky, and without nice error reporting
+                history.maps[0].get(relation, relation)
+                for x in self.relations_to_minimize.value.split()
+                for relation in [self.session.analysis_state.ivy_interp.sig.symbols[x]]
+            ],
+        ))
+        if res is None:
+            return None
+        else:
+            # display the transition and return the pre facts
+            assert len(res.states) == 2
+            self.ignore_display_checkbox_change = True
+            try:
+                for c in lu.used_constants(clauses.to_formula()):
+                    if lg.first_order_sort(c.sort) and c.name[0] != '@':
+                        name = '={}'.format(c.name)
+                        self.node_label_display_checkboxes[name]['node_necessarily'].value = True
+                    elif type(c.sort) is lg.FunctionSort and c.sort.arity == 1:
+                        self.node_label_display_checkboxes[c.name]['node_necessarily'].value = True
+                    elif type(c.sort) is lg.FunctionSort and c.sort.arity == 2:
+                        self.edge_display_checkboxes[c.name]['all_to_all'].value = True
+                    else:
+                        pass
+            finally:
+                self.ignore_display_checkbox_change = False
+            self.set_states(res.states[0], res.states[1])
+            #self.post_graph.selected = self.get_relevant_elements(self.post_state[2], clauses) # TODO - this should be put back or get_relevant_elements should be removed
+            self.show_result('The following conjecture is violated:\n{}'.format(
+                str(conj.to_formula()),
+            ))
+            return self.get_all_pre_facts()
+
+    def find_inductive_invariant(self, button=None):
+        """
+        Use the new algorithm to find an inductive invariant, sometimes
+        with the help of the user.
+        """
+        from ivy_logic_utils import Clauses, and_clauses, dual_clauses, used_symbols_clauses, negate, clause_to_formula, lit_to_formula, var_to_skolem
+        import ivy_transrel
+        from ivy_solver import atom_to_z3, formula_to_z3, clauses_to_z3
+        import tactics_api as ta
+        from proof import ProofGoal
+        from ivy_logic_utils import Clauses, and_clauses, dual_clauses
+
+
+        if not hasattr(self, 'A'):
+            # first time running the method, initialize
+
+            self.A = [] # A is a list of conjectures of the form frozenset of literals (used to be Not(And(*literals)))
+            # Add self.conjectures to A
+            for conj in self.conjectures:
+                assert conj.is_universal_first_order()
+                assert len(conj.defs) == 0
+                assert len(conj.clauses) == 1
+                d = dual_clauses(conj, lambda v: var_to_skolem('__sk_',lg.Var(v.rep,v.sort)))
+                assert len(d.defs) == 0
+                assert all(len(x) == 1 for x in d.clauses)
+                lits = [negate(lit_to_formula(x[0])) for x in d.clauses]
+                self.A.append(frozenset(lits))
+                # c = clause_to_formula(conj.clauses[0])
+                # if type(c) is not lg.Or:
+                #     c = lg.Or(c)
+                # #self.A.append(lg.Not(lg.And(*(negate(lit) for lit in c))))
+                # self.A.append(frozenset(c))
+
+            self.Fs = dict() # dict mapping from len(A) to copy of self.F
+            # the keys of f are integers
+            # F[i] is a dict mapping each c in A to a set of subsets of c
+
+        while True:
+            self.F = dict()
+            self.Fs[len(self.A)] = self.F
+            self.F[-1] = dict((c, bottom) for c in self.A)
+            self.F[0] = self.alpha_init()
+            if any(self.F[0][c] == top for c in self.A):
+                # return relaxed trace
+                return False, self.A
+            i = 0
+            while not all(self.le(self.F[i][c], self.F[i - 1][c]) for c in self.A):
+                print timestamp(), "====== i = {}, len(A) = {}".format(i, len(self.A))
+                i += 1
+                self.F[i] = self.alpha_step(self.F[i - 1])
+                print "----  F[{}]:".format(i)
+                x = and_clauses(*(
+                    self.get_selected_conjecture([negate(lit) for lit in b])
+                    for bs in self.F[i].values()
+                    for b in bs
+                ))
+                if x == lg.And():
+                    print "    TOP"
+                else:
+                    for f in x.fmlas:
+                        print "    ", f
+                print
+                v = None
+                for c in self.A:
+                    if self.F[i][c] == top:
+                        v = c
+                        break
+                if v is not None:
+                    s = self.step_model(self.F[i - 1], v)
+                    assert s is not None
+                    self.A.append(frozenset(
+                        negate(lit) for lit in s
+                        #if (type(lit) is not lg.Not or type(lit.body) is lg.Eq) and
+                        #'head' not in str(lit) and
+                        #'tail' not in str(lit)
+                    ))
+                    break
+            if v is None:
+                # return inductive invariant
+                return True, and_clauses(*(
+                    self.get_selected_conjecture([negate(lit) for lit in b])
+                    for bs in self.F[i - 1].values()
+                    for b in bs
+                ))
+
+top = frozenset()
+bottom = frozenset([frozenset()])
+def select(lst, indices):
+    return [lst[i] for i in indices]
 
 
 class AnalysisSessionWidget(object):
@@ -1957,13 +2451,27 @@ class LatticeMap(object):
                 z3.Sum([z3.If(x, 1, 0) for x in self.pres]) <= i
             ))
 
-    def sample(self, pre_at_most=None):
-        if pre_at_most is None or pre_at_most >= self.n:
-            constrains = []
-        else:
+        # cardinality constrains on number of post facts
+        self.post_at_mosts = [z3.Bool('post_at_most_{}'.format(i)) for i in range(n)]
+        for i in range(n):
+            self.s.add(z3.Implies(
+                self.post_at_mosts[i],
+                z3.Sum([z3.If(x, 1, 0) for x in self.posts]) <= i
+            ))
+
+
+    def sample(self, pre_at_most=None, post_at_most=None):
+        constrains = []
+        if pre_at_most is not None and pre_at_most < self.n:
             assert 0 <= pre_at_most < self.n
-            constrains = [self.pre_at_mosts[pre_at_most]]
+            constrains.append(self.pre_at_mosts[pre_at_most])
+        if post_at_most is not None and post_at_most < self.n:
+            assert 0 <= post_at_most < self.n
+            constrains.append(self.post_at_mosts[post_at_most])
+
+
         if self.s.check(constrains) == z3.unsat:
+            print "LatticeMap: no more samples"
             return None
         else:
             m = self.s.model()
