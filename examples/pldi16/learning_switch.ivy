@@ -20,7 +20,7 @@ module acyclic_partial_function(carrier) = {
 
     # Conjectures that ensure that tc really describes the transitive closure
     # of an acyclic partial function.
-    # These conjectures for part of the safety property.
+    # These conjectures form part of the safety property.
     conjecture tc(X,X)                          # Reflexivity
     conjecture tc(X, Y) & tc(Y, Z) -> tc(X, Z)  # Transitivity
     conjecture tc(X, Y) & tc(Y, X) -> X = Y     # Anti-symmetry
