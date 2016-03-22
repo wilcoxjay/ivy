@@ -12,7 +12,7 @@ bakery
 
 
 =============================
-Numbers used in UPenn slides
+Examples statistics
 =============================
 
 leader election (using function symbols, btw relation, and not putting "leader(X) -> idn(Y)<=idn(X)" in the original safety property):
@@ -20,7 +20,7 @@ sorts: 2 - node, id
 relations and function symbols (counting only btw and not ring.le): 5 - ring.btw, le, leader, pending, idn
 number of literals in safety property: 3
 number of literals in invariant: 9
-number of CTI iterations : 3
+number of CTI iterations : 3, including that leader has highest id
 
 learning switch (with route.dom, hosts and switches are both nodes):
 sorts: 2 - node, packet
@@ -57,4 +57,17 @@ number of literals in original conjecture set: 5
 number of literals in final invariant: 13
 number of CTI iterations: 3
 
-=============================
+verdi mutex:
+sorts: 5 - client, lock_m, unlock_m, grant_m, list_elem
+relations and function symbols: 11 counting everything - waiting.empty, waiting.le, waiting.at_head, waiting.data, pending*3, fld*3, has_lock
+number of literals in safety property: 3
+number of literals in invariant: 18
+number of CTI iterations : 8
+
+ironfleet toy lock mutex:
+sorts: 2 - node, epoch
+relations and function symbols: 5 - le, ep, held, transfer, locked (not counting constants zero, first)
+number of literals in safety property: 3
+number of literals in invariant: 46 (initial attempt, before removal of redundent clauses)
+number of literals in invariant: 23 (after removal of redundent clauses, which can be automated)
+number of CTI iterations : 12 (initial attempt)

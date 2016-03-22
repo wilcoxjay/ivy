@@ -15,7 +15,6 @@
 ################################################################################
 
 module acyclic_partial_function(carrier) = {
-    relation dom(X:carrier)            # domain of the function
     relation tc(X:carrier,Y:carrier)   # transitive closure of the function
 
     # Conjectures that ensure that tc really describes the transitive closure
@@ -26,10 +25,10 @@ module acyclic_partial_function(carrier) = {
     conjecture tc(X, Y) & tc(Y, X) -> X = Y     # Anti-symmetry
     conjecture tc(X, Y) & tc(X, Z) -> (tc(Y, Z) | tc(Z, Y)) # Semi-linearity
 
-    init ~dom(X) & (tc(X,Y) <-> X = Y)     #initially empty
+    init (tc(X,Y) <-> X = Y)     #initially empty
+
 
     action set(x:carrier,y:carrier) = {
-       dom(x) := true;
        tc(X, Y) := tc(X, Y) | (tc(X, x) & tc(y, Y))
     }
 
@@ -89,15 +88,14 @@ action receive = {
 
         ########################################
         # learn: if no route from receiving switch back to source...
-        if (~route(src(p)).dom(sw1) & src(p) ~= sw1) {
-            # assert ~route(src(p)).tc(sw0, sw1) -- translated to safety below
+        if ((route(src(p)).tc(sw1,X:node) -> X:node=sw1) & src(p) ~= sw1) {
             call route(src(p)).set(sw1, sw0)   # create new route from sw1 to sw0
         };
 
         ########################################
         # forward the packet if destination is not self
         if dst(p) ~= sw1 {
-            if ~route(dst(p)).dom(sw1) { # if no route from sw1 to to dst(p)...
+            if (route(dst(p)).tc(sw1,X:node) -> X:node=sw1) { # if no route from sw1 to to dst(p)...
                 pending(p, sw1, Y) := link(sw1, Y) & Y ~= sw0  # flood
             } else {
                 sw2 := route(dst(p)).get(sw1); # get the routing table entry
@@ -110,17 +108,11 @@ action receive = {
 export new_packet
 export receive
 
-# The safety property defined by the assertion in receive that ensures
-# acyclicity of the routing tables
-conjecture ~(
-    pending(P, SW0, SW1) &
-    ~route(src(P)).dom(SW1) & src(P) ~= SW1 &
-    route(src(P)).tc(SW0, SW1)
-)
+# The safety property is given by the conjectures of the
+# acyclic_partial_function module, that state that the routing tables
+# do not create cycles.
 
 # obtained interactively via CTI's
 conjecture ~(route.tc(N1,N1,N0) & N1 ~= N0)
-conjecture ~(route.tc(N2,N0,N2) & N0 ~= N2 & ~route.dom(N2,N0))  # this is actually not needed
-conjecture ~(route.tc(N0,N2,N1) & N1 ~= N2 & ~route.dom(N0,N2))
-conjecture ~(route.tc(N2,N1,N0) & N0 ~= N2 & N1 ~= N0 & ~route.dom(N2,N0))
-conjecture ~(pending(P0,N1,N0) & N1 ~= src(P0) & ~route.dom(src(P0),N1))
+conjecture ~(route.tc(N2,N1,N0) & ~route.tc(N2,N1,N2) & N1 ~= N0)
+conjecture ~(pending(P0,N2,N1) & ~route.tc(src(P0),N2,src(P0)))
