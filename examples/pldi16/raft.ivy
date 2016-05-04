@@ -244,7 +244,8 @@ action ascend = {
         assume tag_of_node(n) = candidate;
         assume member(V, q) -> received_votes(current_term, n, V);
         tag_of_node(n) := leader;
-        quorum_of_election(current_term) := q
+        quorum_of_election(current_term) := q;
+        matches(n, N, E) := false
     }
 }
 
@@ -311,7 +312,7 @@ action receive_aer = {
         assume current_term_of_node(n, current_term);
         assume append_ent_reply.pending(aer, n);
         if current_term = append_ent_reply.term_of(aer) {
-            matches(n, append_ent_reply.source_of(aer), ent_of_aer(aer)) := true
+            matches(n, append_ent_reply.source_of(aer), E) := matches(n, append_ent_reply.source_of(aer), E) | (log(E, n) & ent_le(E, ent_of_aer(aer)))
         }
     }
 }
@@ -323,6 +324,7 @@ action commit = {
     local n:node, q:quorum, e:ent {
         assume log(e, n);
         assume member(N, q) -> matches(n, N, e);
+        assume tag_of_node(n) = leader;
         quorum_of_ent(e) := q;
         committed(e) := true
     }
