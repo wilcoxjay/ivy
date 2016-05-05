@@ -370,10 +370,14 @@ conjecture ~(current_term_of_node(V, CT) & term_le(CT,T) & votes(T,V,N) & CT ~= 
 # conjecture ~(votes(T0,N1,N0) & votes(T0,N1,N2) & N2 ~= N0)
 # conjecture ~(term_le(current_term_of_node(N1),T1) & votes(T1,N1,N0) & current_term_of_node(N1) ~= T1)
 
+# log matching
+
+# conjecture log(E1, N1) & log(E1, N2) & ent_le(E2, E1) -> log(E2, N1) = log(E2, N2)
+
 
 # Bogus conjecture to ensure it is possible to commit an entry.
 # Spins out with a depth bound of around 8 or 9.
 # conjecture ~committed(E)
 
-# The following conjecture causes "Check Inductiveness" to spin out
-conjecture committed(E) & current_term_of_node(L, T) & term_le(term_of_ent(E), T) & tag_of_node(L) = leader -> log(E, L)
+# conjecture committed(E) & current_term_of_node(L, T) & term_le(term_of_ent(E), T) & tag_of_node(L) = leader -> log(E, L)
+# conjecture committed(E) & member(N, quorum_of_ent(E)) -> log(E, N)
