@@ -109,20 +109,21 @@ individual quorum_of_election(T: term): quorum
 # by the emacs mode, so this is abbreviated to "ent".
 type ent
 
-# For now, we represent the index of an entry just using a total order
-# on entries themselves. It is possible that we will need to introduce
-# a separate totally ordered type for indices and then map entries to
-# their index.
-relation ent_le(E1: ent, E2: ent)
-instantiate total_order(ent_le)
+type index
+
+relation index_le(I1: index, I2: index)
+instantiate total_order(index_le)
 
 # A smallest entry. Used just as a dummy element.
-individual initial_ent: ent
-axiom ent_le(initial_ent, E)
+individual initial_index: index
+axiom index_le(initial_index, I)
+
+individual index_of_ent(E: ent): index
+init index_of_ent(E) = initial_index
 
 # Each RequestVote RPC includes the highest log entry of the candidate.
-individual last_log_ent(RV: request_vote_t): ent
-
+individual last_log_index(RV: request_vote_t): index
+individual last_log_term(RV: request_vote_t): term
 
 # A request from an external client.
 type command
@@ -188,8 +189,9 @@ action start_election = {
         request_vote.source_of(m) := n;
         request_vote.term_of(m) := next_term;
         assume log(e, n);
-        assume log(E, n) -> ent_le(E, e);
-        last_log_ent(m) := e;
+        assume log(E, n) -> index_le(index_of_ent(E), index_of_ent(e));
+        last_log_index(m) := index_of_ent(e);
+        last_log_term(m) := term_of_ent(e);
         request_vote.pending(m, N) := true;
         votes(next_term, n, n) := true;
         received_votes(next_term, n, n) := true
@@ -206,10 +208,13 @@ action receive_request_vote = {
                 current_term_of_node(n, request_vote.term_of(m)) := true;
                 tag_of_node(n) := follower
             };
-            local current_term:term {
+            local current_term:term, e:ent {
                 assume current_term_of_node(n, current_term);
+                assume log(e, n);
+                assume log(E, n) -> index_le(index_of_ent(E), index_of_ent(e));
 
-                if ~votes(current_term, n, C:node) & (log(E:ent, n) -> ent_le(E:ent, last_log_ent(m))) {
+                if ~votes(current_term, n, C:node) & term_le(term_of_ent(e), last_log_term(m)) &
+                   ((term_of_ent(e) ~= last_log_term(m)) | index_le(index_of_ent(e), index_of_ent(last_log_index(m)))) {
                     tag_of_node(n) := follower;
                     votes(current_term, n, request_vote.source_of(m)) := true;
                     local r:request_vote_reply_t {
@@ -252,11 +257,11 @@ action ascend = {
 
 # Nondeterministically receive a request from the outside world.
 action client_request = {
-    local l:node, current_term:term, c:command, e:ent {
+    local l:node, current_term:term, c:command, e:ent, i:index {
         assume current_term_of_node(l, current_term);
         assume tag_of_node(l) = leader;
         assume ~log(e, N);  # e has not been used yet
-        assume log(E, l) -> ent_le(E, e);
+        assume log(E, l) -> (index_le(index_of_ent(E), i) & index_of_ent(e) ~= i);
         command_of(e) := c;
         term_of_ent(e) := current_term;
         log(e, l) := true
@@ -270,7 +275,7 @@ action send_ae = {
         assume tag_of_node(l) = leader;
         assume ~append_ent.pending(ae, N);
         assume log(e, l) & log(prev, l);
-        assume (log(E, l) & ent_le(prev, E) & ent_le(E, e)) -> (E = e | E = prev);
+        assume (log(E, l) & index_le(index_of_ent(prev), index_of_ent(E)) & index_le(index_of_ent(E), index_of_ent(e))) -> (E = e | E = prev);
         ent_of_ae(ae) := e;
         prev_of(ae) := e;
         append_ent.source_of(ae) := l;
@@ -287,7 +292,7 @@ action receive_ae = {
         assume ~append_ent_reply.pending(aer, N);
         if term_le(current_term, append_ent.term_of(ae)) {
             if current_term ~= append_ent.term_of(ae) {
-                current_term_of_node(n, current_term) := true;
+                current_term_of_node(n, current_term) := false;
                 current_term_of_node(n, append_ent.term_of(ae)) := true;
                 tag_of_node(n) := follower
             };
@@ -295,7 +300,7 @@ action receive_ae = {
                 assume current_term_of_node(n, current_term);
 
                 if log(prev_of(ae), n) & ~log(ent_of_ae(ae), n) {
-                    log(E, n) := log(E, n) & ent_le(E, prev_of(ae));
+                    log(E, n) := log(E, n) & index_le(index_of_ent(E), index_of_ent(prev_of(ae)));
                     log(ent_of_ae(ae), n) := true;
                     ent_of_aer(aer) := ent_of_ae(ae);
                     append_ent_reply.term_of(aer) := current_term;
@@ -312,7 +317,7 @@ action receive_aer = {
         assume current_term_of_node(n, current_term);
         assume append_ent_reply.pending(aer, n);
         if current_term = append_ent_reply.term_of(aer) {
-            matches(n, append_ent_reply.source_of(aer), E) := matches(n, append_ent_reply.source_of(aer), E) | (log(E, n) & ent_le(E, ent_of_aer(aer)))
+            matches(n, append_ent_reply.source_of(aer), E) := matches(n, append_ent_reply.source_of(aer), E) | (log(E, n) & index_le(index_of_ent(E), index_of_ent(ent_of_aer(aer))))
         }
     }
 }
@@ -372,7 +377,7 @@ conjecture ~(current_term_of_node(V, CT) & term_le(CT,T) & votes(T,V,N) & CT ~= 
 
 # log matching
 
-# conjecture log(E1, N1) & log(E1, N2) & ent_le(E2, E1) -> log(E2, N1) = log(E2, N2)
+conjecture log(E1, N1) & log(E1, N2) & index_le(index_of_ent(E2), index_of_ent(E1)) -> log(E2, N1) = log(E2, N2)
 
 
 # Bogus conjecture to ensure it is possible to commit an entry.
