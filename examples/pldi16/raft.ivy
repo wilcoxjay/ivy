@@ -321,7 +321,8 @@ action receive_aer = {
 # Nondeterministically commit an entry. In practice this would be
 # checked for when processing an AppendEntry response.
 action commit = {
-    local n:node, q:quorum, e:ent {
+    local n:node, q:quorum, e:ent, t:term {
+        assume current_term_of_node(n, t); # bogus
         assume log(e, n);
         assume member(N, q) -> matches(n, N, e);
         assume tag_of_node(n) = leader;
