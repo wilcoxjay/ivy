@@ -355,7 +355,7 @@ conjecture current_term_of_node(N, T1) & current_term_of_node(N, T2) -> T1 = T2
 conjecture ~(N1 ~= N2 & tag_of_node(N1) = leader & tag_of_node(N2) = leader & current_term_of_node(N1, T) & current_term_of_node(N2, T))
 # election safety manually cleaned up inductive invariant:
 conjecture ~(received_votes(T,N0,N0) & received_votes(T,N1,N0) & N1 ~= N0)
-conjecture ~(request_vote_reply.pending(R,N) & ~votes(request_vote_reply.term_of(R),request_vote_reply.source_of(R),N))
+conjecture ~(request_vote_reply.pending(R0,N) & ~votes(request_vote_reply.term_of(R0),request_vote_reply.source_of(R0),N))
 conjecture ~(request_vote.pending(R,request_vote.source_of(R)) & ~votes(request_vote.term_of(R),request_vote.source_of(R),request_vote.source_of(R)))
 conjecture ~(current_term_of_node(L, T) & member(V,quorum_of_election(T)) & tag_of_node(L) = leader & ~received_votes(T,L,V))
 conjecture ~(received_votes(T,N,V) & ~votes(T,V,N))
