@@ -119,7 +119,6 @@ individual initial_index: index
 axiom index_le(initial_index, I)
 
 individual index_of_ent(E: ent): index
-init index_of_ent(E) = initial_index
 
 # Each RequestVote RPC includes the highest log entry of the candidate.
 individual last_log_index(RV: request_vote_t): index
@@ -139,16 +138,13 @@ type command
 individual command_of(E: ent): command
 
 individual term_of_ent(E: ent): term
-init term_of_ent(initial_ent) = initial_term
 
 relation committed(E: ent)
 init ~committed(E)
 
 # log(E, N) means entry E is in the log at node N
 relation log(E: ent, N: node)
-init E ~= initial_ent -> ~log(E, N)
-init log(initial_ent, N)
-
+init ~log(E, N)
 
 # The following two types represent the request and reply messages for
 # the AppendEntries RPC.  For simplicity, this model only allows one
@@ -214,7 +210,7 @@ action receive_request_vote = {
                 assume log(E, n) -> index_le(index_of_ent(E), index_of_ent(e));
 
                 if ~votes(current_term, n, C:node) & term_le(term_of_ent(e), last_log_term(m)) &
-                   ((term_of_ent(e) ~= last_log_term(m)) | index_le(index_of_ent(e), index_of_ent(last_log_index(m)))) {
+                   ((term_of_ent(e) ~= last_log_term(m)) | index_le(index_of_ent(e), last_log_index(m))) {
                     tag_of_node(n) := follower;
                     votes(current_term, n, request_vote.source_of(m)) := true;
                     local r:request_vote_reply_t {
@@ -262,8 +258,10 @@ action client_request = {
         assume tag_of_node(l) = leader;
         assume ~log(e, N);  # e has not been used yet
         assume log(E, l) -> (index_le(index_of_ent(E), i) & index_of_ent(e) ~= i);
+        # need some way of enforcing that i is *smallest* unused index
         command_of(e) := c;
         term_of_ent(e) := current_term;
+        index_of_ent(e) := i;
         log(e, l) := true
     }
 }
@@ -299,7 +297,7 @@ action receive_ae = {
             local current_term:term {
                 assume current_term_of_node(n, current_term);
 
-                if log(prev_of(ae), n) & ~log(ent_of_ae(ae), n) {
+                if log(prev_of(ae), n) & ~log(ent_of_ae(ae), n) { # TODO: check that there are new entries
                     log(E, n) := log(E, n) & index_le(index_of_ent(E), index_of_ent(prev_of(ae)));
                     log(ent_of_ae(ae), n) := true;
                     ent_of_aer(aer) := ent_of_ae(ae);
